@@ -201,6 +201,7 @@ fn spawn_closure_impl(
                         &mut vm,
                         &mut symbols,
                         &mut compile,
+                        &crate::compiler::stdlib_cache::StdlibCache::Process,
                     );
                 }
 
