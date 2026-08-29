@@ -21,3 +21,20 @@ macro_rules! etrace {
         }
     };
 }
+
+/// True when `--trace=compile` is active.
+///
+/// Compile phases gate on the static CLI config, not on a VM's trace cell:
+/// the file frontend takes only `symbols`/`cctx`, so a phase mark fires where
+/// no `&VM` is in scope. This is the gating the `[trace:regions]` dumps in
+/// `compile_file_inner` already use.
+pub(crate) fn compile() -> bool {
+    crate::config::get().trace_bits() & crate::config::trace_bits::COMPILE != 0
+}
+
+/// Print one phase-timing mark: `[trace:SUBSYSTEM] LABEL 12.3ms`.
+pub(crate) fn phase(enabled: bool, subsystem: &str, label: &str, start: std::time::Instant) {
+    if enabled {
+        eprintln!("[trace:{subsystem}] {label} {:?}", start.elapsed());
+    }
+}

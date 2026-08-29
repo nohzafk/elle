@@ -300,15 +300,10 @@ fn compile_file_inner(
     cctx: &mut CompileCtx,
     source_name: &str,
 ) -> Result<(CompileResult, crate::syntax::Expander), String> {
-    let profile = std::env::var("ELLE_PROFILE").is_ok();
+    let tracing = crate::trace::compile();
     let t0 = std::time::Instant::now();
     let mark = |label: &str| {
-        if profile {
-            eprintln!(
-                "[elle-profile] compile {source_name} {label}: {:?}",
-                t0.elapsed()
-            );
-        }
+        crate::trace::phase(tracing, "compile", &format!("{source_name} {label}"), t0);
     };
     let (hir, arena, expander, prim_values, signal_projection) =
         compile_file_frontend(source, symbols, cctx, source_name)?;

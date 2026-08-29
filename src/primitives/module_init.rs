@@ -23,12 +23,10 @@ pub fn init_stdlib(
     cctx: &mut CompileCtx,
     cache: &crate::compiler::stdlib_cache::StdlibCache,
 ) -> StdlibSource {
-    let profile = std::env::var("ELLE_PROFILE").is_ok();
+    let tracing = crate::trace::compile();
     let t0 = std::time::Instant::now();
     let mark = |label: &str| {
-        if profile {
-            eprintln!("[elle-profile] stdlib {label}: {:?}", t0.elapsed());
-        }
+        crate::trace::phase(tracing, "compile", &format!("stdlib {label}"), t0);
     };
     // Try the disk cache first: same stdlib source + same elle binary → same
     // compiled bytecode. On hit we skip the entire ~2.4s front end.
@@ -37,17 +35,12 @@ pub fn init_stdlib(
         let mut source = StdlibSource::Cache;
         let bytecode = match cached {
             Ok(bc) => {
-                mark("cache-load");
-                if profile {
-                    eprintln!("[elle-profile] stdlib cache HIT");
-                }
+                mark("cache-load (hit)");
                 bc
             }
             Err(e) => {
                 source = StdlibSource::Compiled;
-                if profile {
-                    eprintln!("[elle-profile] stdlib cache miss ({}); recompiling", e);
-                }
+                mark(&format!("cache-miss ({e}); recompiling"));
                 match compile_file(STDLIB, symbols, cctx, "<stdlib>") {
                     Ok(r) => r.bytecode,
                     Err(e) => panic!("stdlib compilation failed: {}", e),

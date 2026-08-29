@@ -86,15 +86,15 @@ fn compile_syntaxes_frontend_xform_inner(
     xform: impl FnOnce(Vec<Syntax>, crate::syntax::ScopeId) -> Vec<Syntax>,
 ) -> FrontendResult {
     intern_primitive_names(symbols);
-    let profile = std::env::var("ELLE_PROFILE").is_ok();
+    let tracing = crate::trace::compile();
     let ft0 = std::time::Instant::now();
     let fmark = |label: &str| {
-        if profile {
-            eprintln!(
-                "[elle-profile] frontend {source_name} {label}: {:?}",
-                ft0.elapsed()
-            );
-        }
+        crate::trace::phase(
+            tracing,
+            "compile",
+            &format!("frontend {source_name} {label}"),
+            ft0,
+        );
     };
 
     let source_epoch = crate::epoch::extract_epoch(&mut syntaxes)?;
