@@ -93,6 +93,16 @@ impl<'a> Lowerer<'a> {
                 }
                 // Bind the remaining tail to the rest pattern
                 if let Some(rest_pat) = rest {
+                    // A LIST rest is a borrowed sublist aliased into the
+                    // scrutinee's region pages — `RestDestructure` returns the
+                    // cdr pointer with NO owning reference (unlike the `rest()`
+                    // intrinsic, whose result the solver counts as a container
+                    // read). Mark its bindings so a call arg that aliases one is
+                    // treated as borrowed (a callee's owned-param release must
+                    // not free the caller's still-live scrutinee region).
+                    for b in rest_pat.bindings().bindings {
+                        self.destructure_alias_bindings.insert(b);
+                    }
                     self.lower_destructure(rest_pat, current, strict)?;
                 }
                 Ok(())

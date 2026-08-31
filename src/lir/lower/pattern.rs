@@ -1,12 +1,35 @@
 //! Pattern matching lowering
 
 use super::*;
-use crate::hir::decision::{Constructor, DecisionTree};
+use crate::hir::decision::{AccessPath, Constructor, DecisionTree};
 use crate::hir::{HirPattern, PatternKey, PatternLiteral};
 
 mod keyed;
 mod matching;
 mod seq;
+
+/// Does an access path reach a binding through a cons TAIL (`Rest`)? A `(a & r)`
+/// pattern binds `r` at `AccessPath::Rest(...)`; an element inside the rest
+/// (`(a & [x])`) is reached through `Rest` then `First`. Such a binding is a
+/// BORROWED subview of the scrutinee — the decision tree loads it with the
+/// `Rest` intrinsic, which carries no owning reference (the region solver only
+/// registers a counted container read for *call-site* `rest()`/`first()`,
+/// not for pattern loads). The lowerer marks these bindings in
+/// `destructure_alias_bindings` so a tail or non-tail call argument naming one
+/// is treated as borrowed (matching `arg_leaf_is_borrowed`'s upvalue route) —
+/// the callee's owned-param release must not free the caller's still-live
+/// scrutinee region.
+pub(super) fn access_has_rest(access: &AccessPath) -> bool {
+    match access {
+        AccessPath::Rest(_) => true,
+        AccessPath::First(inner) => access_has_rest(inner),
+        AccessPath::Index(inner, _)
+        | AccessPath::Slice(inner, _)
+        | AccessPath::Key(inner, _)
+        | AccessPath::StructRest(inner, _) => access_has_rest(inner),
+        AccessPath::Root => false,
+    }
+}
 
 impl<'a> Lowerer<'a> {
     // ── Decision tree lowering ─────────────────────────────────────
@@ -69,6 +92,19 @@ impl<'a> Lowerer<'a> {
                 // and keeping it on the operand stack would leak intermediates.
                 for (binding, access) in bindings {
                     let val_reg = self.load_access_path(access, scrutinee_slot)?;
+                    // A binding reached through `AccessPath::Rest` (or the
+                    // `First` of a cons whose enclosing path is a Rest) is a
+                    // BORROWED sublist aliased into the scrutinee's region
+                    // pages — the decision tree loads it via `Rest`, which
+                    // carries no counted-read retain the solver registered for
+                    // this match (it only registers the intrinsic `rest()`
+                    // calls). Mark it so a call arg that hands it to an
+                    // owned-param callee is treated as borrowed (the callee's
+                    // release must not free the caller's still-live scrutinee
+                    // region — the match sibling of the tail-move-borrow UAF).
+                    if access_has_rest(access) {
+                        self.destructure_alias_bindings.insert(*binding);
+                    }
                     let slot = if let Some(&existing) = self.binding_to_slot.get(binding) {
                         existing
                     } else {
@@ -129,6 +165,19 @@ impl<'a> Lowerer<'a> {
                 // Establish bindings — pop after each store (same as Leaf).
                 for (binding, access) in bindings {
                     let val_reg = self.load_access_path(access, scrutinee_slot)?;
+                    // A binding reached through `AccessPath::Rest` (or the
+                    // `First` of a cons whose enclosing path is a Rest) is a
+                    // BORROWED sublist aliased into the scrutinee's region
+                    // pages — the decision tree loads it via `Rest`, which
+                    // carries no counted-read retain the solver registered for
+                    // this match (it only registers the intrinsic `rest()`
+                    // calls). Mark it so a call arg that hands it to an
+                    // owned-param callee is treated as borrowed (the callee's
+                    // release must not free the caller's still-live scrutinee
+                    // region — the match sibling of the tail-move-borrow UAF).
+                    if access_has_rest(access) {
+                        self.destructure_alias_bindings.insert(*binding);
+                    }
                     let slot = if let Some(&existing) = self.binding_to_slot.get(binding) {
                         existing
                     } else {

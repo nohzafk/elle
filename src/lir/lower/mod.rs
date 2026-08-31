@@ -204,6 +204,21 @@ pub struct Lowerer<'a> {
     /// Set of bindings that are upvalues (captures/parameters in lambda)
     /// These use LoadCapture/StoreCapture, not LoadLocal/StoreLocal
     upvalue_bindings: std::collections::HashSet<Binding>,
+    /// Bindings bound to a BORROWED SUBVIEW of a scrutinee by destructuring:
+    /// a `(a & rest)` / `(a b)` list or array pattern binds `rest` (and, for a
+    /// list, each element) to a pointer ALIASED INTO the scrutinee's region
+    /// pages — `RestDestructure`/`FirstDestructure` return no owning reference
+    /// (unlike the `rest()`/`first()` intrinsics, whose results the solver
+    /// registers as counted container reads). Passing such an alias as an
+    /// owned-param CALL ARGUMENT (tail or not) makes the callee's param release
+    /// free the caller's still-live scrutinee region — the match/destructure
+    /// sibling of the captured-upvalue tail-move-borrow UAF
+    /// (`region-tail-move-borrow-uaf.lisp`). Marking these bindings borrowed
+    /// makes `arg_leaf_is_borrowed`/`tail_arg_is_borrowed` treat them like any
+    /// other borrowed arg: the caller mints a fresh owning reference at the call
+    /// (the `CallArgument`/borrowed-arg incref) that the callee's release
+    /// balances, leaving the scrutinee's own reference intact.
+    destructure_alias_bindings: std::collections::HashSet<Binding>,
     /// Current span for emitted instructions
     current_span: Span,
     /// Intrinsic operations for operator specialization.
@@ -439,6 +454,7 @@ impl<'a> Lowerer<'a> {
             num_captures: 0,
             num_local_params: 0,
             upvalue_bindings: std::collections::HashSet::new(),
+            destructure_alias_bindings: std::collections::HashSet::new(),
             current_span: Span::synthetic(),
             intrinsics: FxHashMap::default(),
             call_classification: crate::hir::CallClassification::default(),
