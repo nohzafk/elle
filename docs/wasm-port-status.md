@@ -135,18 +135,32 @@ cargo check --tests --examples
 embedder（`cordis-wasm` 那一层的 mock host）注册 JS console 回调来提供。
 M4 之前必须补上，否则看不到任何输出。
 
-wasm 上还有 81 个警告（0 错误）。**不用急着清，但要知道它们是什么**：
+警告已清零（`339bc7bd`）。**wasm 与全部原生 feature 组合都是 0 警告 0 错误。**
 
-- 6 个 unused import，全在 `primitives/chan.rs`（`3f6254fc` 保类型砍实现留下的）。
-- 其余基本都是 `dead_code`，绝大部分是 `plugin_api/capi.rs` 那套 C ABI 访问器 ——
-  没有 `plugin` feature 就没人调它们。它们的存在是有意的（ABI 表形状不能随
-  target 变），所以这批警告的正确处理多半是给模块加一个 `#![allow(dead_code)]`
-  而不是删代码。
-- `ffi/registry.rs` 的 `NativeLib`/`LoadedLib`/`REGISTRY` 等也在里面，同理：
-  bookkeeping 保留，只是 wasm 上永远不会有东西进去。
+那 81 个警告正好沿三条**互不相干**的轴分解，这是清理能落在对处的原因：
 
-清警告前先确认它不会引入 target 分叉的 `#[cfg]` 噪声 —— 现在这批警告的信息量
-（"这些路径在 wasm 上确实死了"）本身是有价值的。
+| 数量 | 位置 | 轴 |
+|---|---|---|
+| 54 | `plugin_api/` 子树 | `feature = "plugin"` |
+| 7 | `ffi/registry.rs` | `feature = "libloading"` |
+| 20 | chan / port / heap / vm / freelog | `target_arch = "wasm32"` |
+
+**前两组根本不是 wasm 问题** —— 原生 `--no-default-features` 同样报 61 个，而
+`--features plugin` 单独开就 0 个。按 target 去 gate 它们会"恰好也对"，但那是巧合。
+
+- lint 等级**沿模块树下传**，所以 54 个用 `pub mod plugin_api;` 上一个
+  `#[cfg_attr(not(feature = "plugin"), allow(dead_code))]` 就全收了。
+- 20 个里有 6 个是真垃圾（`chan.rs` 里只被切除的 primitive 体用到的 import），
+  那 6 个是 **cfg 掉，不是 allow 掉**。
+- 剩 14 个是本移植通用的"保数据、砍实现"，allow 才是诚实的答案。但**先查到真正的
+  调用者再标**：`exit_trapped` 的读者在 `primitives::subprocess`、
+  `ThreadHandle::new` 的在 `primitives::concurrency`、`freed_site` 的是
+  `segv_handler`（需要 MMU）。
+- `port` 和 `chan` 整个模块在 wasm 上只剩数据，用模块级 allow；另外 4 个散落在
+  仍然活着的大模块里，**逐项标注**，这样那些模块将来真出现死代码还会报。
+
+唯一剩下的警告：`cargo check --tests --examples` 报 `io::pending::get` never
+used。**预存且与本移植无关**（`io/` 全程没碰，且只在 test build 里出现）。
 
 ## 后续里程碑
 
