@@ -219,8 +219,11 @@ pub(super) fn resolve_and_splice_include(
             syntax.span, path
         ));
     }
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| format!("{}: include: failed to read '{}': {}", syntax.span, path, e))?;
+    let contents = match crate::vfs::read(&path) {
+        Some(mounted) => mounted,
+        None => std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: include: failed to read '{}': {}", syntax.span, path, e))?,
+    };
     let forms = read_syntax_all_for(&contents, &path)?;
     for (i, form) in forms.into_iter().enumerate() {
         pending.insert(i, form);

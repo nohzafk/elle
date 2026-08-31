@@ -139,6 +139,7 @@ pub mod symbol;
 pub mod symbols;
 pub mod syntax;
 pub mod value;
+pub mod vfs;
 pub mod vm;
 #[cfg(feature = "wasm")]
 pub mod wasm;

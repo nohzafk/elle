@@ -52,6 +52,14 @@ fn elle_root() -> Option<PathBuf> {
 
 /// Resolve a module specifier to a concrete file path.
 pub(crate) fn resolve_import(spec: &str) -> Option<String> {
+    // Mounted source shadows the filesystem, and resolves to the spec itself as
+    // its path — the read sites recognise it by looking the path up again. This
+    // is first so a mount always wins over a same-named real file; on wasm32 it
+    // is the only branch that can succeed at all, since nothing below is a file.
+    if crate::vfs::is_mounted(spec) {
+        return Some(spec.to_string());
+    }
+
     let as_path = Path::new(spec);
 
     // Virtual prefix: std/X → <repo-root>/lib/X.lisp
@@ -268,7 +276,10 @@ pub(crate) fn prim_import_file(
         }
 
         // Elle source file loading — fall back to plugin loading on UTF-8 failure
-        let contents = match std::fs::read_to_string(&path) {
+        let contents = match crate::vfs::read(&path)
+            .map(Ok)
+            .unwrap_or_else(|| std::fs::read_to_string(&path))
+        {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 // File exists but isn't valid UTF-8 — try loading as a plugin
