@@ -18,20 +18,31 @@
 
 use crate::primitives::def::RegionEffect;
 use std::cell::RefCell;
+#[cfg(not(target_arch = "wasm32"))]
 use std::os::unix::io::RawFd;
+/// wasm32 has no file descriptors. [`WakeList`] still exists here as a plain
+/// data structure, because `value::send` needs its type to move channel
+/// endpoints between fibers; nothing ever registers in it, since
+/// `chan/select` is the only registrant and it is not compiled in. `RawFd`
+/// is an `i32` alias, so the definitions below need no cfg of their own.
+#[cfg(target_arch = "wasm32")]
+type RawFd = i32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_channel::{self, TryRecvError, TrySendError};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::io::request::{IoOp, IoRequest};
 use crate::signals::Signal;
 use crate::value::fiber::{SignalBits, SIG_ERROR, SIG_IO, SIG_OK};
 use crate::value::types::Arity;
 use crate::value::Value;
 
+#[cfg(not(target_arch = "wasm32"))]
 mod prims;
+#[cfg(not(target_arch = "wasm32"))]
 use prims::*;
 
 /// Shared wake state between a channel's sender and receiver halves.
@@ -77,9 +88,14 @@ fn chan_trace(trace: &crate::config::TraceCell, args: std::fmt::Arguments<'_>) {
     let line = format!("[trace:chan] {}\n", args);
     // SAFETY: writing to fd 2 (stderr) is always valid; failures are
     // benign (trace lines are diagnostic, not load-bearing).
+    #[cfg(not(target_arch = "wasm32"))]
     unsafe {
         libc::write(2, line.as_ptr() as *const libc::c_void, line.len());
     }
+    // wasm32 has no fd 2, and no syscall to bypass buffering for. Where a
+    // trace line ends up is the embedder's choice.
+    #[cfg(target_arch = "wasm32")]
+    eprint!("{}", line);
 }
 
 impl WakeList {
@@ -174,7 +190,7 @@ fn wake_fd_signal(trace: &crate::config::TraceCell, fd: RawFd) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 fn wake_fd_signal(trace: &crate::config::TraceCell, fd: RawFd) {
     debug_assert!(fd >= 0, "wake_fd_signal: invalid fd {}", fd);
     let one: u8 = 1;
@@ -194,6 +210,13 @@ fn wake_fd_signal(trace: &crate::config::TraceCell, fd: RawFd) {
     }
 }
 
+/// wasm32: there is no fd to signal. Nothing is ever registered in a
+/// [`WakeList`] here — `chan/select` is the only registrant and it is not
+/// compiled in — so `wake_all` iterates an empty vec and never reaches this.
+/// It exists to keep `wake_all` compiling, which `value::send` needs.
+#[cfg(target_arch = "wasm32")]
+fn wake_fd_signal(_trace: &crate::config::TraceCell, _fd: RawFd) {}
+
 /// Allocate a wake fd usable for `IoOp::ChanSelectPark`.
 ///
 /// Returns `(poll_fd, wake_fd)`.  On Linux both are the same eventfd
@@ -210,7 +233,9 @@ fn make_wake_fd(trace: &crate::config::TraceCell) -> std::io::Result<(RawFd, Raw
     Ok((fd, fd))
 }
 
-#[cfg(not(target_os = "linux"))]
+// No wasm32 counterpart: `chan/select` is the only caller and it is not
+// compiled in there.
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 fn make_wake_fd(trace: &crate::config::TraceCell) -> std::io::Result<(RawFd, RawFd)> {
     let mut fds: [libc::c_int; 2] = [-1, -1];
     // SAFETY: fds is a 2-element c_int array; pipe(2) writes both
@@ -263,6 +288,7 @@ fn make_wake_fd(trace: &crate::config::TraceCell) -> std::io::Result<(RawFd, Raw
 /// `PendingOp::ChanSelectPark`, and dropped exactly once — on completion,
 /// cancellation, or aborted submission.  Drop deregisters from every
 /// wake list and closes the fds.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ChanSelectGuard {
     poll_fd: RawFd,
     wake_fd: RawFd,
@@ -272,6 +298,7 @@ pub struct ChanSelectGuard {
     trace: crate::config::TraceCell,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ChanSelectGuard {
     /// The fd the scheduler should poll for POLLIN.
     pub fn poll_fd(&self) -> RawFd {
@@ -279,6 +306,7 @@ impl ChanSelectGuard {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for ChanSelectGuard {
     fn drop(&mut self) {
         debug_assert!(
@@ -322,8 +350,10 @@ impl Drop for ChanSelectGuard {
 /// IoOp is dropped without ever being submitted (e.g. fiber aborted
 /// before the scheduler runs `io/submit`), the guard is still inside the
 /// cell and its Drop reclaims the fds and wake-list slots.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ChanSelectGuardCell(RefCell<Option<ChanSelectGuard>>);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ChanSelectGuardCell {
     pub fn new(guard: ChanSelectGuard) -> Self {
         ChanSelectGuardCell(RefCell::new(Some(guard)))
@@ -336,6 +366,7 @@ impl ChanSelectGuardCell {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for ChanSelectGuardCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ChanSelectGuardCell(..)")
@@ -427,6 +458,7 @@ pub(crate) fn receiver_value(
     ctx.external("chan/receiver", ChanReceiver(RefCell::new(Some(rx)), wake))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 primitive! {
     "chan" => prim_chan_new {
         signal: Signal::errors(),

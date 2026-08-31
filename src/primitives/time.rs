@@ -26,6 +26,23 @@ pub(crate) fn prim_clock_monotonic(
 
 /// Returns thread CPU time in seconds
 /// (clock/cpu)
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn prim_clock_cpu(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    // No per-thread CPU clock here. Substituting wall time would make any
+    // profile built on this silently wrong, so refuse instead.
+    (
+        SIG_ERROR,
+        ctx.error(
+            "unsupported",
+            "clock/cpu: no thread CPU clock on wasm32".to_string(),
+        ),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prim_clock_cpu(
     ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     _args: &[Value],

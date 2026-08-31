@@ -137,6 +137,21 @@ pub fn prim_ffi_align(
 
 // ── Memory management ───────────────────────────────────────────────
 
+#[cfg(target_arch = "wasm32")]
+pub fn prim_ffi_malloc(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    // There is no libc allocator here, and `std::alloc` cannot stand in:
+    // `ffi/free` is handed a bare pointer, while `dealloc` needs the exact
+    // `Layout` the allocation was made with.
+    (
+        SIG_ERROR,
+        ctx.error("unsupported", "ffi/malloc: not available on wasm32"),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn prim_ffi_malloc(
     ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     args: &[Value],
@@ -162,6 +177,19 @@ pub fn prim_ffi_malloc(
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn prim_ffi_free(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    // Nothing on this target can have produced a pointer for it to free.
+    (
+        SIG_ERROR,
+        ctx.error("unsupported", "ffi/free: not available on wasm32"),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn prim_ffi_free(
     ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     args: &[Value],

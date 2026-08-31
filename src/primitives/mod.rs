@@ -11,7 +11,11 @@ pub mod array;
 pub mod bitwise;
 pub mod r#box;
 pub mod bytes;
-#[cfg(not(target_arch = "wasm32"))]
+/// Unlike its OS-facing neighbours below, this stays compiled on wasm32:
+/// `value::send` and `value::heap` need `SendableValue` and `WakeList` to
+/// move channel endpoints between fibers. Inside it, the fd machinery and
+/// the primitive table are cfg'd out, so `chan::PRIMITIVES` does not exist
+/// there and `stub_wasm` supplies the names instead.
 pub mod chan;
 pub mod collection;
 

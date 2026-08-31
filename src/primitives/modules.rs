@@ -5,6 +5,26 @@ use crate::value::types::Arity;
 use crate::value::Value;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "plugin")]
+use crate::plugin::load_plugin;
+
+/// Stands in for [`crate::plugin::load_plugin`] when the `plugin` feature is
+/// off, so the two `import` call sites need no cfg of their own. Such a build
+/// has no libloading and cannot dlopen anything, so this always fails, and
+/// `import` reports it exactly the way it reports any other plugin load
+/// failure.
+#[cfg(not(feature = "plugin"))]
+fn load_plugin(
+    path: &str,
+    _vm: &mut crate::vm::VM,
+    _symbols: &mut crate::symbol::SymbolTable,
+) -> Result<Value, String> {
+    Err(format!(
+        "cannot load {}: this build has no dynamic plugin support",
+        path
+    ))
+}
+
 /// Check whether a file path has a native shared library extension.
 fn is_native_library(path: &str) -> bool {
     path.ends_with(".so") || path.ends_with(".dylib") || path.ends_with(".dll")
@@ -230,7 +250,7 @@ pub(crate) fn prim_import_file(
                 retain_plugin_result(vm, cached);
                 return (SIG_OK, cached);
             }
-            let result = match crate::plugin::load_plugin(&path, vm, symbols) {
+            let result = match load_plugin(&path, vm, symbols) {
                 Ok(value) => {
                     vm.loaded_plugins.insert(path.clone(), value);
                     retain_plugin_result(vm, value);
@@ -252,7 +272,7 @@ pub(crate) fn prim_import_file(
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 // File exists but isn't valid UTF-8 — try loading as a plugin
-                let result = match crate::plugin::load_plugin(&path, vm, symbols) {
+                let result = match load_plugin(&path, vm, symbols) {
                     Ok(value) => {
                         vm.loaded_plugins.insert(path.clone(), value);
                         retain_plugin_result(vm, value);
