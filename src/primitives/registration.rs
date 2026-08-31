@@ -15,7 +15,7 @@ use super::{
 #[cfg(not(target_arch = "wasm32"))]
 use super::{chan, concurrency, io, net, ports, posix, stream, subprocess, unix, watch};
 #[cfg(target_arch = "wasm32")]
-use super::stub_wasm;
+use super::{stdio_wasm, stub_wasm};
 
 /// All primitive tables. Each module exports a `static PRIMITIVES`
 /// array; this list is the single place that enumerates them.
@@ -98,7 +98,10 @@ fn platform_tables() -> &'static [&'static [PrimitiveDef]] {
 
 #[cfg(target_arch = "wasm32")]
 fn platform_tables() -> &'static [&'static [PrimitiveDef]] {
-    static TABLES: &[&[PrimitiveDef]] = &[stub_wasm::PRIMITIVES];
+    // `stdio_wasm` first, and disjoint from `stub_wasm` by construction: the
+    // generator excludes exactly the names this table provides, so no name is
+    // registered twice and none is left only as a stand-in.
+    static TABLES: &[&[PrimitiveDef]] = &[stdio_wasm::PRIMITIVES, stub_wasm::PRIMITIVES];
     TABLES
 }
 

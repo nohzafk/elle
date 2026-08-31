@@ -14,6 +14,16 @@ cd "$(dirname "$0")/.."
 MODULES="chan concurrency io net unix ports posix stream subprocess watch"
 OUT=src/primitives/stub_wasm.rs
 
+# Names that wasm32 implements for real, in src/primitives/stdio_wasm.rs, and so
+# must NOT get a stand-in here — a duplicate registration would be two entries
+# for one name. They live in a cut-out module (`ports`) but need nothing from the
+# OS: they only mint a `Port` value with no descriptor.
+#
+# This is not a convenience. stdlib.lisp calls all three at load time
+# (`(def *stdout* (parameter (port/stdout)))` and friends at top level), so a
+# stand-in answering `:unsupported` takes down `init_stdlib` itself.
+PROVIDED="port/stdin port/stdout port/stderr"
+
 # Names live inside `primitive!` blocks only. A bare grep for '"x" =>' also
 # hits ordinary match arms (io.rs has `"read" => libc::POLLIN`), so the
 # extraction is scoped to the macro block. Aliases are collected too and
@@ -45,7 +55,20 @@ extract() {
   done | sort -u
 }
 
-names=$(extract)
+all=$(extract)
+
+# A PROVIDED name that is no longer extracted means the native spelling moved and
+# this list went stale. Left silent, the new spelling would get a stand-in and
+# stdlib.lisp would again fail to load — the exact bug PROVIDED exists to prevent.
+for p in $PROVIDED; do
+  if ! printf '%s\n' "$all" | grep -qxF "$p"; then
+    echo "gen-wasm-stubs: PROVIDED name '$p' is not defined in any of: $MODULES" >&2
+    echo "  it was probably renamed — update PROVIDED and src/primitives/stdio_wasm.rs" >&2
+    exit 1
+  fi
+done
+
+names=$(printf '%s\n' "$all" | grep -vxF "$(printf '%s\n' $PROVIDED)" || true)
 count=$(printf '%s\n' "$names" | grep -c . || true)
 
 # A silent zero here would emit an empty table and the failure would only
@@ -72,6 +95,11 @@ fi
 //!
 //! Aliases are flattened into ordinary entries: what has to match is the set
 //! of registered symbols, not which spelling is canonical.
+//!
+//! Three names from `ports` are deliberately absent — `port/stdin`,
+//! `port/stdout` and `port/stderr` are implemented for real in `stdio_wasm`,
+//! because stdlib.lisp calls them at load time and a `:unsupported` answer
+//! would abort `init_stdlib`. See `PROVIDED` in the generator.
 //!
 //! GENERATED FILE — do not edit. Run `tools/gen-wasm-stubs.sh` after adding
 //! a primitive to any of those modules.

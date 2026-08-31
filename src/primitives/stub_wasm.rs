@@ -14,6 +14,11 @@
 //! Aliases are flattened into ordinary entries: what has to match is the set
 //! of registered symbols, not which spelling is canonical.
 //!
+//! Three names from `ports` are deliberately absent — `port/stdin`,
+//! `port/stdout` and `port/stderr` are implemented for real in `stdio_wasm`,
+//! because stdlib.lisp calls them at load time and a `:unsupported` answer
+//! would abort `init_stdlib`. See `PROVIDED` in the generator.
+//!
 //! GENERATED FILE — do not edit. Run `tools/gen-wasm-stubs.sh` after adding
 //! a primitive to any of those modules.
 
@@ -89,9 +94,6 @@ primitive! {
     "port/read-line" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/seek" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/set-options" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
-    "port/stderr" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
-    "port/stdin" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
-    "port/stdout" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/tell" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/write" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "stream/flush" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }

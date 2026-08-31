@@ -21,6 +21,10 @@ pub mod bytes;
 /// registered only by `chan/select`, which is one of the cfg'd-out primitives.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod chan;
+/// The three stdio port constructors on wasm32 — real implementations, not
+/// stand-ins, and required for `init_stdlib` to get off the ground at all.
+#[cfg(target_arch = "wasm32")]
+pub mod stdio_wasm;
 pub mod collection;
 
 pub mod comparison;
