@@ -10,6 +10,11 @@
 //!    the plugin's `extern "C"` function pointer. The VM checks for the
 //!    sentinel before calling, and dispatches through this table.
 
+// The async-IO subsystem is compiled out on wasm32 (see `lib.rs` on `mod io`).
+// Exactly one API slot builds an `IoRequest` — `capi::make_poll_fd` — and it has
+// a wasm32 counterpart that reports nil, so the ABI table keeps its shape on
+// both targets and no plugin-facing slot disappears.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::io::request::IoRequest;
 use crate::primitives::def::PrimitiveDef;
 use crate::signals::Signal;

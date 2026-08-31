@@ -1,6 +1,7 @@
 //! wasm32 stand-ins for the primitives whose implementing modules are
 //! compiled out on that target (`chan`, `concurrency`, `io`, `net`, `unix`,
-//! `ports`, `posix`, `subprocess`, `watch` — see `lib.rs` on `mod io`).
+//! `ports`, `posix`, `stream`, `subprocess`, `watch` — see `lib.rs` on
+//! `mod io`).
 //!
 //! Only the *names* matter here. stdlib.lisp defines wrappers such as
 //! `ev/spawn`, `chan/select` and `subprocess/system` whose bodies reference
@@ -77,16 +78,25 @@ primitive! {
     "port?" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/close" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/encoding" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/flush" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/open" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/open-bytes" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/open?" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/path" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/read" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/read-all" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/read-exact" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/read-line" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/seek" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/set-options" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/stderr" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/stdin" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/stdout" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "port/tell" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "port/write" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "stream/flush" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "stream/read" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
+    "stream/write" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "subprocess/exec" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "subprocess/kill" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }
     "subprocess/pid" => prim_unsupported { signal: Signal::errors(), arity: Arity::AtLeast(0), category: "unsupported" }

@@ -7,13 +7,13 @@ use super::{
     allocator, arena, arithmetic, array, bitwise, bytes, comparison, compile, config, convert,
     debug, disassembly, display, fiber_introspect, fibers, fileio, format, intrinsics,
     introspection, json, list, loading, logic, lstruct, math, memory, meta, modules, package,
-    parameters, path, r#box, read, sets, sort, stream, string, structs, time, traits, types,
+    parameters, path, r#box, read, sets, sort, string, structs, time, traits, types,
 };
 
 // The OS-facing modules. Compiled out on wasm32, where `stub_wasm` stands in
 // for the whole group — see `platform_tables()` below.
 #[cfg(not(target_arch = "wasm32"))]
-use super::{chan, concurrency, io, net, ports, posix, subprocess, unix, watch};
+use super::{chan, concurrency, io, net, ports, posix, stream, subprocess, unix, watch};
 #[cfg(target_arch = "wasm32")]
 use super::stub_wasm;
 
@@ -59,6 +59,11 @@ pub(crate) static ALL_TABLES: &[&[PrimitiveDef]] = &[
     read::PRIMITIVES,
     sets::PRIMITIVES,
     sort::PRIMITIVES,
+    // Held in place rather than moved to `platform_tables()`: cfg'ing the entry
+    // where it stands leaves every native `prim_id` exactly as it was, so the
+    // native stdlib cache is not invalidated by a wasm-only change. On wasm32
+    // the six `port/*` names come back from `stub_wasm`.
+    #[cfg(not(target_arch = "wasm32"))]
     stream::PRIMITIVES,
     string::PRIMITIVES,
     structs::PRIMITIVES,

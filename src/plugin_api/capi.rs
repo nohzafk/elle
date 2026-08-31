@@ -99,6 +99,7 @@ pub(super) fn intern_str(s: String) -> &'static str {
 
 // ── Async ─────────────────────────────────────────────────────────────
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) extern "C" fn make_poll_fd(ctx: *mut CallCtx, fd: i32, events: u32) -> [u64; 2] {
     from_value(unsafe {
         with_ctx(ctx, |heap, region| {
@@ -106,6 +107,15 @@ pub(super) extern "C" fn make_poll_fd(ctx: *mut CallCtx, fd: i32, events: u32) -
             IoRequest::poll_fd(&alloc, fd, events)
         })
     })
+}
+
+/// wasm32 has no file descriptors and no event loop to poll them with, so there
+/// is no `IoRequest` to build. The slot stays in the ABI table — dropping it
+/// would make the table's shape target-dependent — and answers nil, which the
+/// SDK already treats as "this host cannot poll".
+#[cfg(target_arch = "wasm32")]
+pub(super) extern "C" fn make_poll_fd(_ctx: *mut CallCtx, _fd: i32, _events: u32) -> [u64; 2] {
+    from_value(Value::NIL)
 }
 
 // ── Keyword interning ─────────────────────────────────────────────────

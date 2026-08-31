@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MODULES="chan concurrency io net unix ports posix subprocess watch"
+MODULES="chan concurrency io net unix ports posix stream subprocess watch"
 OUT=src/primitives/stub_wasm.rs
 
 # Names live inside `primitive!` blocks only. A bare grep for '"x" =>' also
@@ -59,7 +59,8 @@ fi
   cat <<'HEADER'
 //! wasm32 stand-ins for the primitives whose implementing modules are
 //! compiled out on that target (`chan`, `concurrency`, `io`, `net`, `unix`,
-//! `ports`, `posix`, `subprocess`, `watch` — see `lib.rs` on `mod io`).
+//! `ports`, `posix`, `stream`, `subprocess`, `watch` — see `lib.rs` on
+//! `mod io`).
 //!
 //! Only the *names* matter here. stdlib.lisp defines wrappers such as
 //! `ev/spawn`, `chan/select` and `subprocess/system` whose bodies reference

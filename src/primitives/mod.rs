@@ -41,6 +41,11 @@ pub mod introspection;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod io;
 pub mod json;
+// Keyword-extraction helpers for the socket/port primitives. `ConnectKwargs`
+// has a `SocketOptions` field, so the module follows the async-IO subsystem out
+// on wasm32; its only consumers are `stream`, `ports`, `net` and `unix`, all of
+// which are compiled out on that target too.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod kwarg;
 pub mod list;
 pub mod loading;
@@ -67,6 +72,10 @@ pub mod sets;
 pub mod sort;
 #[cfg(target_arch = "wasm32")]
 pub mod stub_wasm;
+// The `port/read*`/`port/write`/`port/flush` primitives build `IoRequest`
+// descriptors for the scheduler to dispatch. No scheduler on wasm32, so the
+// module joins the compiled-out group and `stub_wasm` supplies its six names.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod stream;
 pub mod string;
 pub mod structs;
