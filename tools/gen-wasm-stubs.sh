@@ -22,7 +22,17 @@ OUT=src/primitives/stub_wasm.rs
 # This is not a convenience. stdlib.lisp calls all three at load time
 # (`(def *stdout* (parameter (port/stdout)))` and friends at top level), so a
 # stand-in answering `:unsupported` takes down `init_stdlib` itself.
-PROVIDED="port/stdin port/stdout port/stderr"
+# port/write and port/flush joined them in M4. Those two DO need somewhere for
+# the bytes to go, and get it from `crate::outbuf` rather than the OS. Unlike the
+# three above they are not needed at stdlib load time — they are excluded here
+# because `println` is useless without them, which is a demo requirement rather
+# than a bootstrap one.
+# Aliases must be listed too. They are flattened into ordinary entries above, so
+# `stream/write` is its own name in the extracted set: excluding only
+# `port/write` leaves its alias stubbed, and stdio_wasm registering that alias
+# would then be the second entry for one name — the duplicate this list exists
+# to prevent, arriving through the back door.
+PROVIDED="port/stdin port/stdout port/stderr port/write port/flush stream/write stream/flush"
 
 # Names live inside `primitive!` blocks only. A bare grep for '"x" =>' also
 # hits ordinary match arms (io.rs has `"read" => libc::POLLIN`), so the

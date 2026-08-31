@@ -102,6 +102,7 @@ pub mod lir;
 pub mod lsp;
 #[cfg(feature = "mlir")]
 pub mod mlir;
+pub mod outbuf;
 pub mod path;
 pub mod pipeline;
 #[cfg(feature = "plugin")]
