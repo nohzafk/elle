@@ -40,12 +40,34 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-/// One process-global entry per canonical library path. Owns the `libloading::Library`
+/// The mapping handle for one loaded library.
+///
+/// `libloading` is an optional dependency, pulled in by the `ffi` and `plugin`
+/// features; a build with neither has no way to `dlopen`, and wasm32 has none at
+/// any feature setting. The registry's *bookkeeping* stays either way — it is
+/// what `ffi/native` and `ffi/on-unload` report against — but with no way to map
+/// a library, `load`/`load_self` always fail and no `LoadedLib` is ever built.
+/// The handle is then uninhabited, which makes that unreachability a fact the
+/// compiler checks rather than a comment.
+#[cfg(feature = "libloading")]
+type NativeLib = libloading::Library;
+
+/// Uninhabited stand-in for `libloading::Library` — see the type alias above for
+/// why a build without `libloading` can never construct one.
+#[cfg(not(feature = "libloading"))]
+enum NativeLib {}
+
+// The condition spelled `all(unix, feature = "libloading")` below is "this build
+// can map a shared library": `dlopen` is a Unix facility and `libloading` is the
+// crate that reaches it. It cannot be factored into a named alias — `#[cfg]` is
+// an attribute and takes no macro expansion — so it is written out at each site.
+
+/// One process-global entry per canonical library path. Owns the [`NativeLib`]
 /// (the mapping) for the process lifetime — it is never dropped, so `dlclose` never
 /// runs (see module docs). `teardowns` are C symbols in this library to call, in
 /// order, when the program explicitly tears down.
 struct LoadedLib {
-    native: libloading::Library,
+    native: NativeLib,
     teardowns: Vec<String>,
 }
 
@@ -193,7 +215,7 @@ pub(crate) fn library_candidates(spec: &str, os: DlOs) -> Vec<String> {
 /// is left to the dynamic linker (`LD_LIBRARY_PATH` / `ld.so.cache`). Dedup keys on
 /// the candidate that actually loaded, so two spellings of one file share an entry.
 pub(crate) fn load(spec: &str) -> Result<PathBuf, String> {
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "libloading"))]
     {
         let candidates = library_candidates(spec, current_dl_os());
         let mut reg = registry().lock().expect("ffi registry mutex poisoned");
@@ -227,11 +249,12 @@ pub(crate) fn load(spec: &str) -> Result<PathBuf, String> {
         }
         Err(last_err.unwrap_or_else(|| format!("Failed to load library '{}'", spec)))
     }
-    #[cfg(not(unix))]
+    #[cfg(not(all(unix, feature = "libloading")))]
     {
         let _ = current_dl_os(); // keep the helper exercised on all targets
         Err(format!(
-            "Dynamic library loading only supported on Unix (attempted to load {})",
+            "Dynamic library loading needs Unix and the `ffi` or `plugin` feature \
+             (attempted to load {})",
             spec
         ))
     }
@@ -240,14 +263,14 @@ pub(crate) fn load(spec: &str) -> Result<PathBuf, String> {
 /// Load the current process as a library (`dlopen(NULL)`), returning its registry
 /// key (the `<self>` sentinel). Like [`load`], the mapping is process-lifetime.
 pub(crate) fn load_self() -> Result<PathBuf, String> {
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "libloading"))]
     {
         let key = PathBuf::from("<self>");
         let mut reg = registry().lock().expect("ffi registry mutex poisoned");
         if reg.by_path.contains_key(&key) {
             return Ok(key);
         }
-        let native: libloading::Library = {
+        let native: NativeLib = {
             use libloading::os::unix::Library as UnixLibrary;
             UnixLibrary::this().into()
         };
@@ -262,15 +285,16 @@ pub(crate) fn load_self() -> Result<PathBuf, String> {
         reg.by_path.insert(key.clone(), idx);
         Ok(key)
     }
-    #[cfg(not(unix))]
+    #[cfg(not(all(unix, feature = "libloading")))]
     {
-        Err("Self-process loading not supported on this platform".to_string())
+        Err("Self-process loading needs Unix and the `ffi` or `plugin` feature".to_string())
     }
 }
 
 /// Resolve a symbol in the library named by `key`, returning a raw pointer. The
 /// pointer is valid for the process lifetime — the mapping is never unloaded — so it
 /// stays usable after the registry lock is released (e.g. by a later `ffi/call`).
+#[cfg(feature = "libloading")]
 pub(crate) fn symbol(key: &PathBuf, sym: &str) -> Result<*const c_void, String> {
     let reg = registry().lock().expect("ffi registry mutex poisoned");
     let &idx = reg
@@ -285,10 +309,19 @@ pub(crate) fn symbol(key: &PathBuf, sym: &str) -> Result<*const c_void, String> 
     }
 }
 
+/// Without `libloading` nothing can ever be mapped, so `by_path` is permanently
+/// empty and every key is an unknown one. Reporting the same "not loaded" error
+/// the real lookup gives for an unknown key keeps the caller's error path single.
+#[cfg(not(feature = "libloading"))]
+pub(crate) fn symbol(key: &PathBuf, _sym: &str) -> Result<*const c_void, String> {
+    Err(format!("library '{}' not loaded", key.display()))
+}
+
 /// Register an ordered teardown for the library named by `key`: a zero-arg C symbol
 /// (e.g. `"git_libgit2_shutdown"`) to call when the program explicitly tears down.
 /// The symbol is resolved now so a typo errors immediately rather than silently at
 /// teardown.
+#[cfg(feature = "libloading")]
 pub(crate) fn register_teardown(key: &PathBuf, sym: &str) -> Result<(), String> {
     let mut reg = registry().lock().expect("ffi registry mutex poisoned");
     let &idx = reg
@@ -314,10 +347,18 @@ pub(crate) fn register_teardown(key: &PathBuf, sym: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// See [`symbol`]'s stand-in: with nothing loadable there is no library to
+/// register a teardown against.
+#[cfg(not(feature = "libloading"))]
+pub(crate) fn register_teardown(key: &PathBuf, _sym: &str) -> Result<(), String> {
+    Err(format!("library '{}' not loaded", key.display()))
+}
+
 /// Run every registered teardown, in **reverse load order**, draining them (a
 /// second call is a no-op). Each is a zero-arg C function in its still-mapped
 /// library; this **never `dlclose`s** — the mapping stays for the process lifetime.
 /// Explicit-only: the runtime never calls this itself (see module docs).
+#[cfg(feature = "libloading")]
 pub(crate) fn run_teardowns() {
     // Collect the function pointers under the lock, then call them after releasing
     // it: a teardown is foreign C that must not be run holding the registry mutex
@@ -345,6 +386,12 @@ pub(crate) fn run_teardowns() {
         unsafe { f() };
     }
 }
+
+/// No library could be loaded, so no teardown could be registered — there is
+/// nothing to run. `ffi/run-teardowns` stays callable and succeeds trivially,
+/// which is what "drain the registered teardowns" means on an empty registry.
+#[cfg(not(feature = "libloading"))]
+pub(crate) fn run_teardowns() {}
 
 #[cfg(test)]
 mod tests;

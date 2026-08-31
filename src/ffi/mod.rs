@@ -4,7 +4,11 @@
 //! to match the design in docs/ffi.md.
 //!
 //! The `ffi` cargo feature gates the libffi-dependent call/callback
-//! machinery. Type descriptors and library loading are always available.
+//! machinery. Type descriptors and the library-loading *API* are always
+//! available — but actually mapping a library needs `libloading`, which only
+//! the `ffi` and `plugin` features pull in, so on a build with neither (and on
+//! wasm32, which cannot `dlopen` at all) `registry::load` reports that instead
+//! of failing to compile.
 
 #[cfg(feature = "ffi")]
 pub mod call;
