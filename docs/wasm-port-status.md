@@ -4,7 +4,9 @@
 作为浏览器里 cordis 插件系统 demo 的底座（demo 只演示插件系统 / policy 热加载 /
 拒绝即提问，不搬完整 agent，不接真 LLM）。
 
-**当前状态：M1 完成 —— wasm32 上 0 个编译错误。原生构建全程未受影响。**
+**当前状态：M2 完成 —— Elle 代码真的在 wasm 里跑出正确答案了**
+（node 里 8 个表达式全过：算术、闭包、`let`、字符串、列表）。
+wasm32 上 0 编译错误 0 警告，原生构建全程未受影响（`cargo test --lib` 2275 passed）。
 
 ## 怎么验证
 
@@ -12,6 +14,15 @@
 cargo check --lib --no-default-features --target wasm32-unknown-unknown
 cargo check --lib          # 必须始终 exit=0，这是硬约束
 ```
+
+**但从 M2 起，上面两条已经不够了。** wasm32 上最贵的缺陷全都编得过、只在调用时
+炸（见 M2 一节的表）。真正的验收是在顶层仓库跑：
+
+```sh
+cd ../cordis-wasm && wasm-pack build --target nodejs --dev && node test-node.cjs
+```
+
+改了 elle 里任何 wasm 相关的东西，都要跑这一条，`cargo check` 说不了话。
 
 第二条是红线：这个移植的全部价值在于不给原生路径添乱。每次改完两条都要跑。
 
@@ -113,6 +124,20 @@ cargo check --tests --examples
    `all(unix, feature = "libloading")`。
    顺带一个语言坑：**`#[cfg(...)]` 里不能用 `macro_rules!` 展开的条件**（属性不做
    宏展开），所以这种复合条件只能每处抄一遍。
+9. **wasm32 上「编过」和「链接过」都不说明能跑，而且这道沟特别宽。**
+   缺失的能力在这个 target 上大多不是缺符号，而是**能编译的 panic 实现**：
+   `Instant::now()` 编得过、一调就 `time not implemented on this platform`；
+   `eprintln!` 编得过、输出被丢弃。所以每一个用到 OS 能力的地方都得问"调用时
+   会怎样"，`cargo check` 和 `cargo build` 都答不了。M2 找到的四个缺陷全属此类。
+   推论：**移植的验收必须是执行，不能是编译**。
+10. **stub 一个名字，和让那个名字能用，是两件事 —— 取决于谁在什么时候调它。**
+    "绑定到报 `:unsupported` 的 primitive"对*用户程序可能调用*的名字是对的
+    （第 5 条），但对 **stdlib 自己在 `init_stdlib` 期间就要调用**的名字是致命的：
+    stdlib.lisp 顶层的 `(def *stdout* (parameter (port/stdout)))` 让三个被 stub 的
+    port 构造器直接搞掉整个 stdlib 加载 —— 后果不是 `println` 不工作，而是
+    **`+` 和 `let` 都不存在**。切模块时要单独检查一遍：被砍掉的名字里，有哪些是
+    stdlib 在**加载期**（而非函数体内）调用的。判据是在 stdlib.lisp 里 grep 那些
+    名字，看缩进和是否在 `defn` 体内。
 
 ## 两个方法论教训
 
@@ -128,10 +153,56 @@ cargo check --tests --examples
 `"read" => libc::POLLIN` 这类 match 分支会假阳性。`gen-wasm-stubs.sh` 限定在
 `primitive!` 块内提取，并且提取到少于 40 个名字就硬失败。
 
+## M2：`eval` 在 wasm 里跑出正确答案
+
+新增 `cordis-wasm` crate（顶层仓库，不动 `cordis-pi`），导出
+`eval_source(src) -> String`，`node cordis-wasm/test-node.cjs` 是验收。
+
+**M2 的全部价值在于"编过"和"跑对"之间的那道沟。** M1 结束时 wasm32 是 0 编译
+错误，甚至 `cargo build --lib --target wasm32-unknown-unknown` 也能链接通过
+（10.6s）—— 而下面四个缺陷一个都没被这些命令发现，因为它们**全都是编过、
+调用时才炸**：
+
+| 缺陷 | 症状 | 解 |
+|---|---|---|
+| `Instant::now()` 在 wasm32 上 panic | `time not implemented on this platform` | `trace::stamp()`：原生 `Instant`，wasm `()` |
+| stdlib 顶层调 `(port/stdout)`，撞上 stub | `init_stdlib` 直接失败 → **没有 stdlib，没有 `+`，没有 `let`** | `primitives/stdio_wasm.rs` 给三个真实现 |
+| `eval_all` 把代码包进 `ev/run` | scheduler 第一步 `(io/backend :async)` 要 epoll/kqueue，连 `(list 1 2 3)` 都跑不了 | 改用 `eval_file`（裸 `execute`） |
+| wasm32 丢弃 stderr | panic 只显示哑 `unreachable`，看不到任何信息 | `console_error_panic_hook` |
+
+第二条最值得记：**"名字绑上了"对 stdlib 在启动路径上要调的 primitive 是不够的。**
+M1 的 stub 策略（每个被砍的名字都绑到一个报 `:unsupported` 的 primitive）对
+"程序可能调、调了就该收到错误"完全正确，但 `port/stdin`/`port/stdout`/`port/stderr`
+是 stdlib 自己在 `init_stdlib` 期间就要调的，一个会失败的绑定等于没有绑定。
+而这三个**根本不需要 OS** —— 它们只是造一个 `fd: None` 的 `Port` 值，这正是
+M1 特意让 `mod port` 在 wasm 上活着的原因；它们被 stub 纯粹是因为跟一堆真要
+建 `IoRequest` 的 primitive 同处一个模块（`ports`）。
+
+为了让两张表不重叠，`gen-wasm-stubs.sh` 加了 `PROVIDED` 列表跳过这三个名字
+（91 → 88 个 stub），**并且在 PROVIDED 里的名字在被扫模块中不存在时硬失败** ——
+否则将来一次改名会静默地把 stub 装回去，而爆点（stdlib 加载失败）离改名处极远。
+
+第三条同样是个入口选择问题而不是移植问题，`eval_all` / `eval_file` 的区别见
+`docs/elle-lisp-knowledge.md` 第 70 条。
+
+**尚未处理的运行时 panic 隐患**（都不在 `(+ 1 2)` 路径上，所以 M2 没碰）：
+`primitives/time.rs` 的 `process_epoch()`（`OnceLock<Instant>` + `Instant::now`，
+供 `clock/monotonic`）和 `prim_clock_realtime` 的 `SystemTime::now()`。
+形状和上表第一条完全一样，**会在第一次调用时炸，不会在编译期出现**。
+（`clock/cpu` 在 M1 已处理：wasm 下返回 `unsupported` 错误，不拿墙钟冒充。）
+
 ## 已知问题
 
-`port/stdout` 和 `port/stderr` 跟着被 stub 了，所以 wasm 下 `println` 是
-`:unsupported`。**这不是待修的 bug，是设计的一部分**：demo 的输出必须由
+**`port/*` 的现状在 M2 变了，下面这段是订正后的。** 原先这里写的是
+"`port/stdout` 和 `port/stderr` 跟着被 stub 了，所以 `println` 是
+`:unsupported`" —— 那个判断把后果说小了：stdlib.lisp 在**顶层**就调这三个
+构造器（`(def *stdout* (parameter (port/stdout)))`），所以 stub 不是让
+`println` 失败，而是让 `init_stdlib` 整个失败，wasm 上连 `(+ 1 2)` 都没有。
+详见下面 M2 一节。
+
+现在这三个是真实现（`primitives/stdio_wasm.rs`），`*stdin*`/`*stdout*`/`*stderr*`
+是真 port 值。**仍然缺的是运输**：`port/write`/`port/read` 还是 stub，所以
+`println` 依旧不出字。**这部分不是待修的 bug，是设计的一部分**：demo 的输出必须由
 embedder（`cordis-wasm` 那一层的 mock host）注册 JS console 回调来提供。
 M4 之前必须补上，否则看不到任何输出。
 
@@ -164,14 +235,29 @@ used。**预存且与本移植无关**（`io/` 全程没碰，且只在 test bui
 
 ## 后续里程碑
 
-M1（本文档）之后：
+M1、M2（本文档）之后：
 
-- **M2** — node 里 `eval("(+ 1 2)")` 得到 3。需要新建 `cordis-wasm` crate
-  （~200 行，wasm-bindgen，三个函数 `init()` / `eval(src)` / `store()`），
-  不动 `cordis-pi`。
-- **M3** — 内存 import resolver 加载 `loader.lisp`。**这是剩下最大的风险**：
-  浏览器没有文件系统，而 `cordis-elle` 用 `import-file`/`include` 组织 13 个文件。
-  方案是 `include_str!` 打包 + 给 elle 的路径解析注入内存 resolver。
+- ~~**M2** — node 里 `eval("(+ 1 2)")` 得到 3。~~ **已完成**，见上面 M2 一节。
+  实际只需要一个导出函数（`eval_source`）而不是预想的三个：`init()` 和
+  `store()` 都属于"跨调用持久状态"，而那是 M3 的事 —— 见下。
+  规模也比预估小得多（`src/lib.rs` 69 行），因为难点全在 elle 侧的四个运行时
+  缺陷上，不在 binding 上。
+- **M3** — 内存 import resolver 加载 `loader.lisp`，外加**跨调用持久 VM**。
+  **这是剩下最大的风险**：浏览器没有文件系统，而 `cordis-elle` 用
+  `import-file`/`include` 组织 13 个文件。方案是 `include_str!` 打包 + 给 elle 的
+  路径解析注入内存 resolver。
+
+  M2 查实的两件事改变了这一步的形状：
+
+  1. **好消息** —— elle 自己的 stdlib 是 `include_str!("../stdlib.lisp")`
+     （`primitives/module_init.rs`），本来就不碰文件系统。所以需要内存 resolver
+     的只有 cordis-elle 那 13 个文件，不含 elle 自身。
+  2. **新的必做项** —— 持久 VM 不只是优化。M2 每次调用都重建引擎，因此每次都要
+     重新编译一遍整个 stdlib：node 里 8 个表达式 24 秒（dev 构建，未优化）。
+     加载 cordis-elle 之后按 per-call 重建根本不可行。
+     难点是 `VM` 持有指向它自己的 `SymbolTable` 和 `CompileCtx` 的裸指针
+     （`vm.set_compile_ctx(&mut cctx as *mut _)`），所以这三件套是自引用的，
+     不能直接塞进 `thread_local`。
 - **M4** — `demo-harness.lisp`（改自 `cordis-elle/examples/agent-harness.lisp`，
   161 行）输出与原生一致。**M4 之前不写任何 UI 代码。**
 - **M5** — 三面板 UI。
