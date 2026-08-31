@@ -4,7 +4,7 @@
 作为浏览器里 cordis 插件系统 demo 的底座（demo 只演示插件系统 / policy 热加载 /
 拒绝即提问，不搬完整 agent，不接真 LLM）。
 
-**当前状态：5 个编译错误。原生构建全程未受影响。**
+**当前状态：M1 完成 —— wasm32 上 0 个编译错误。原生构建全程未受影响。**
 
 ## 怎么验证
 
@@ -17,47 +17,52 @@ cargo check --lib          # 必须始终 exit=0，这是硬约束
 
 `--no-default-features` 是必要的：`jit`/`ffi`/`repl`/`plugin` 都进不了 wasm。
 
+M1 收尾时另外跑过、都是 exit=0 的面（改动碰了 feature gate，所以值得留着复跑）：
+
+```sh
+cargo check --lib --no-default-features                 # 曾有 4 个错，见下
+cargo check --lib --no-default-features --features ffi
+cargo check --lib --no-default-features --features plugin
+cargo check --tests --examples
+```
+
 ## 已完成
 
 | commit | 内容 | 错误数 |
 |---|---|---|
 | `46ea4bf2` | io 整块切除、82 个 primitive stub、`platform_tables()` | 518 → 26 |
 | `3f6254fc` | chan 保类型砍实现；clock/cpu、ffi/malloc、ffi/free、import 各自处理 | 26 → 5 |
+| `7a014b92` | 三个 IoRequest 使用点：`stream`/`kwarg` 整块 cfg，`make_poll_fd` 给 wasm 对偶 | 5 → 2 |
+| `c75f6104` | `port.rs` 的 `OwnedFd` 替身（不可居留 enum） | 2 → 1 |
+| `22007e24` | `ffi/registry.rs` 的 dlopen 按 `libloading` feature gate | 1 → **0** |
 
-具体改了什么见那两个 commit message，写得比这里详细。
+具体改了什么见那五个 commit message，写得比这里详细。
 
-## 剩下的 5 个
+## M1 的三个错误各自怎么解的
 
-```
-plugin_api.rs:13       use crate::io::request::IoRequest
-primitives/kwarg.rs:6  use crate::io::request::SocketOptions
-primitives/stream.rs:7 use crate::io::request::{IoRequest, PortOp}
-port.rs:9              use std::os::unix::io::OwnedFd
-ffi/registry.rs:48     libloading::Library
-```
+**前三个（`plugin_api` / `kwarg` / `stream`）走的是 B**，且 B 的前提复查后成立 ——
+见下面「可复用的结论」第 7 条，那不只是"没影响"，是**机制上拦住了**。
 
-前三个是同一件事，有三条路：
+一个比原方案更好的细节：`stream::PRIMITIVES` 不要搬去 `platform_tables()`，
+而是**就地**在 `ALL_TABLES` 里加 `#[cfg(not(target_arch = "wasm32"))]`
+（`introspection::MLIR_PRIMITIVES` 早有这个先例，所以第 25 行"static 数组不能有
+条件项"那句注释其实不准）。搬走会把它之后所有 primitive 的 id 在**原生**上也
+重新编号，为一个 wasm-only 的改动作废原生的 stdlib cache；就地 cfg 则原生 id
+一个都不动。
 
-| | 做法 | 代价 | 评价 |
-|---|---|---|---|
-| A | 深挖 `io/request` 的子模块，把 `setsockopt`/`spawn`/`buffer` 里的执行层调用逐个 cfg | 一动就是 29 个错误起步，且不知道还有几层 | **已试过，撤回了** |
-| **B** | `stream`/`kwarg` 整块 cfg，primitive 名字补进 `stub_wasm` | wasm 下 primitive id 与原生不同 | **推荐** |
-| C | 各处本地定义替身类型 | `SocketOptions` 是结构体字段类型，会在两个 target 上分叉成两套 | 不建议 |
+`kwarg` 没有自己的 PRIMITIVES 表，所以砍掉它不欠任何名字，也**不要**加进
+`gen-wasm-stubs.sh` 的 MODULES。加进去的只有 `stream`（6 个名字 + 3 个别名，
+82 → 91）。
 
-推荐 B 的理由：`platform_tables()` 这套机制已经建好，把模块整组移出 `ALL_TABLES`
-正是它的用途；`tools/gen-wasm-stubs.sh` 可以重跑，补 `stream` 的名字是改一行参数。
-它完全不动 `io/` 内部，对上游同步负担最轻。
+**第四个（`port.rs` 的 `OwnedFd`）用了替身，但替身是空 enum 而不是 struct。**
+`mod port` 不能跟着 `mod io` 走 —— `value/display` 要渲染 port，`value/send` 要
+重建三个 stdio 种类。而 wasm 上根本进不来一个 fd：所有取 fd 的入口和读 fd 的
+访问器都只被 `io`/`net`/`unix`/`ports` 调用，而存活的 stdio 构造器一律
+`fd: None`。所以用不可居留类型，让"这里不可能有 fd"变成编译器检查的事实，而不是
+一句注释。`port.rs` 内部从不对 fd 调方法（只在 `Option` 里搬进搬出），所以替身
+不需要配任何 impl。
 
-**B 的前提**：wasm 与原生的 primitive id 不同必须是可接受的。id 是每次构建按表
-枚举顺序生成的，只要不跨 target 共享预编译 `.elleb` 就没有影响 —— 浏览器 demo
-是 eval 源码，不涉及。动手前确认这个前提仍然成立。
-
-后两个错误与上面的选择无关，是两件独立的活：
-
-- `port.rs` 的 `OwnedFd`，16 处，File port 的 fd 所有权。要么给个替身 struct，
-  要么把 File port 整块 cfg。
-- `ffi/registry.rs` 的 libloading，6 处，集中在 `LoadedLib`。注意不能把
-  `mod ffi` 整个 cfg 掉（见下）。
+**第五个（libloading）根本不是 wasm 问题。** 见下面第 8 条。
 
 ## 可复用的结论
 
@@ -83,6 +88,31 @@ ffi/registry.rs:48     libloading::Library
    定义，加载时不执行）。
 6. **primitive id 是它在 `ALL_TABLES` + `ffi_tables()` + `platform_tables()`
    枚举中的索引。** 六个消费点必须按同一顺序 chain。改表结构前先想清楚这一点。
+7. **"wasm 与原生 primitive id 不同"是安全的，而且是机制保证的，不是靠约定。**
+   这条查过了，不用再查：
+   - id 由 `PRIM_REGISTRY`（一个 `LazyLock`）在运行时按表序生成。没有 build
+     script，没有编译期烘焙。
+   - 仓库里**根本不存在** `.elleb` —— 这个名字只在本文档里出现过一次。没有那种
+     跨 target 共享的预编译产物格式。
+   - 全仓库唯一把 prim_id 落盘的地方是 `compiler/stdlib_cache.rs`。它的 cache key
+     同时混入 `build_identity()`（可执行文件的长度 + mtime）和
+     `hash_prim_table_identity()`（每个 def 的 name + aliases，按序）。所以就算
+     两个 target 共用一个 cache 目录，表不同 → key 不同 → 读不到对方的。
+   - wasm 上还有第三层：`build_identity()` 走 `std::env::current_exe()`，
+     wasm32-unknown-unknown 答不出来 → `cache_key()` 返回 `None` →
+     `try_load`/`try_store` 都直接 no-op。cache 在 wasm 上结构性关闭。
+   - `value/send/ser.rs` 里那句"prim_id stable across threads/processes"指的是
+     **同一个 build** 的进程；send 是线程间的，而 wasm 上没有线程。
+8. **`ffi/registry.rs` 依赖 `libloading`，而那是 optional dep（只有 `ffi` 和
+   `plugin` feature 拉它）。** 这是个与 target 无关的预存 bug：原生
+   `cargo check --lib --no-default-features` 当时报 4 个同样的错。所以**该按
+   feature gate，不是按 target gate** —— 修完顺手把原生那条也修好了。
+   optional dep 会得到一个同名的隐式 feature，所以 `#[cfg(feature = "libloading")]`
+   就是"这个 crate 在不在"的最精确写法。
+   `load`/`load_self` 本来就有 `#[cfg(unix)]` 的失败兜底分支，真正的条件是
+   `all(unix, feature = "libloading")`。
+   顺带一个语言坑：**`#[cfg(...)]` 里不能用 `macro_rules!` 展开的条件**（属性不做
+   宏展开），所以这种复合条件只能每处抄一遍。
 
 ## 两个方法论教训
 
@@ -104,6 +134,19 @@ ffi/registry.rs:48     libloading::Library
 `:unsupported`。**这不是待修的 bug，是设计的一部分**：demo 的输出必须由
 embedder（`cordis-wasm` 那一层的 mock host）注册 JS console 回调来提供。
 M4 之前必须补上，否则看不到任何输出。
+
+wasm 上还有 81 个警告（0 错误）。**不用急着清，但要知道它们是什么**：
+
+- 6 个 unused import，全在 `primitives/chan.rs`（`3f6254fc` 保类型砍实现留下的）。
+- 其余基本都是 `dead_code`，绝大部分是 `plugin_api/capi.rs` 那套 C ABI 访问器 ——
+  没有 `plugin` feature 就没人调它们。它们的存在是有意的（ABI 表形状不能随
+  target 变），所以这批警告的正确处理多半是给模块加一个 `#![allow(dead_code)]`
+  而不是删代码。
+- `ffi/registry.rs` 的 `NativeLib`/`LoadedLib`/`REGISTRY` 等也在里面，同理：
+  bookkeeping 保留，只是 wasm 上永远不会有东西进去。
+
+清警告前先确认它不会引入 target 分叉的 `#[cfg]` 噪声 —— 现在这批警告的信息量
+（"这些路径在 wasm 上确实死了"）本身是有价值的。
 
 ## 后续里程碑
 
