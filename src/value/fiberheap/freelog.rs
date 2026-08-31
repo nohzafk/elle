@@ -64,11 +64,16 @@ pub(crate) fn set_scan_member(region: u32) {
 /// Arm guardfree page-protection (called once stdlib init completes).
 pub fn arm_guard() {
     GUARD_ARMED.with(|g| g.set(true));
+    // wasm32: there is no SIGSEGV handler to install — this diagnostic needs
+    // an MMU (see `pagepool::guard_and_leak`). GUARD_ARMED is still set, so
+    // the rest of the free-log bookkeeping behaves identically.
+    #[cfg(not(target_arch = "wasm32"))]
     if crate::config::get().has_trace("guardfree") {
         install_segv_handler();
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 extern "C" fn segv_handler(_sig: libc::c_int, info: *mut libc::siginfo_t, _ctx: *mut libc::c_void) {
     // Signal-handler context: best-effort diagnostic only. The fault
     // address is the use-after-free site; attribute it to the freeing
@@ -95,6 +100,7 @@ extern "C" fn segv_handler(_sig: libc::c_int, info: *mut libc::siginfo_t, _ctx: 
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn install_segv_handler() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();

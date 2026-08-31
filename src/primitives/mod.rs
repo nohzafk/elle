@@ -11,11 +11,13 @@ pub mod array;
 pub mod bitwise;
 pub mod r#box;
 pub mod bytes;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod chan;
 pub mod collection;
 
 pub mod comparison;
 pub mod compile;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod concurrency;
 pub mod config;
 pub mod convert;
@@ -32,6 +34,7 @@ pub mod format;
 pub mod formatspec;
 pub mod intrinsics;
 pub mod introspection;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod io;
 pub mod json;
 pub mod kwarg;
@@ -44,26 +47,34 @@ pub mod memory;
 pub mod meta;
 pub mod module_init;
 pub mod modules;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 pub mod package;
 pub mod parameters;
 pub mod path;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ports;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod posix;
 pub mod read;
 pub mod registration;
 pub mod seq;
 pub mod sets;
 pub mod sort;
+#[cfg(target_arch = "wasm32")]
+pub mod stub_wasm;
 pub mod stream;
 pub mod string;
 pub mod structs;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod subprocess;
 pub mod time;
 pub mod traitregistry;
 pub mod traits;
 pub mod types;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod unix;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod watch;
 pub use def::{PrimitiveDef, PrimitiveMeta};
 pub use docs::help_text;

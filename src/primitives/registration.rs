@@ -4,12 +4,18 @@ use crate::vm::VM;
 
 use super::def::{Doc, PrimitiveDef, PrimitiveMeta};
 use super::{
-    allocator, arena, arithmetic, array, bitwise, bytes, chan, comparison, compile, concurrency,
-    config, convert, debug, disassembly, display, fiber_introspect, fibers, fileio, format,
-    intrinsics, introspection, io, json, list, loading, logic, lstruct, math, memory, meta,
-    modules, net, package, parameters, path, ports, posix, r#box, read, sets, sort, stream, string,
-    structs, subprocess, time, traits, types, unix, watch,
+    allocator, arena, arithmetic, array, bitwise, bytes, comparison, compile, config, convert,
+    debug, disassembly, display, fiber_introspect, fibers, fileio, format, intrinsics,
+    introspection, json, list, loading, logic, lstruct, math, memory, meta, modules, package,
+    parameters, path, r#box, read, sets, sort, stream, string, structs, time, traits, types,
 };
+
+// The OS-facing modules. Compiled out on wasm32, where `stub_wasm` stands in
+// for the whole group — see `platform_tables()` below.
+#[cfg(not(target_arch = "wasm32"))]
+use super::{chan, concurrency, io, net, ports, posix, subprocess, unix, watch};
+#[cfg(target_arch = "wasm32")]
+use super::stub_wasm;
 
 /// All primitive tables. Each module exports a `static PRIMITIVES`
 /// array; this list is the single place that enumerates them.
@@ -24,12 +30,10 @@ pub(crate) static ALL_TABLES: &[&[PrimitiveDef]] = &[
     bitwise::PRIMITIVES,
     bytes::PRIMITIVES,
     r#box::PRIMITIVES,
-    chan::PRIMITIVES,
     compile::PRIMITIVES,
     config::PRIMITIVES,
     comparison::PRIMITIVES,
     convert::PRIMITIVES,
-    concurrency::PRIMITIVES,
     debug::PRIMITIVES,
     disassembly::PRIMITIVES,
     display::PRIMITIVES,
@@ -41,7 +45,6 @@ pub(crate) static ALL_TABLES: &[&[PrimitiveDef]] = &[
     introspection::PRIMITIVES,
     #[cfg(feature = "mlir")]
     introspection::MLIR_PRIMITIVES,
-    io::PRIMITIVES,
     json::PRIMITIVES,
     list::PRIMITIVES,
     loading::PRIMITIVES,
@@ -50,14 +53,9 @@ pub(crate) static ALL_TABLES: &[&[PrimitiveDef]] = &[
     memory::PRIMITIVES,
     meta::PRIMITIVES,
     modules::PRIMITIVES,
-    net::PRIMITIVES,
-    unix::PRIMITIVES,
     package::PRIMITIVES,
     parameters::PRIMITIVES,
     path::PRIMITIVES,
-    ports::PRIMITIVES,
-    posix::PRIMITIVES,
-    subprocess::PRIMITIVES,
     read::PRIMITIVES,
     sets::PRIMITIVES,
     sort::PRIMITIVES,
@@ -68,8 +66,36 @@ pub(crate) static ALL_TABLES: &[&[PrimitiveDef]] = &[
     time::PRIMITIVES,
     traits::PRIMITIVES,
     types::PRIMITIVES,
-    watch::PRIMITIVES,
 ];
+
+/// The OS-facing primitive tables, appended the same way the `ffi` ones are
+/// and for the same reason: a `static` array cannot hold conditional entries.
+///
+/// On wasm32 the nine modules are compiled out and `stub_wasm` supplies their
+/// names, bound to a primitive that reports `:unsupported`. Every consumer
+/// must chain this in the same position, because a primitive's id is its
+/// index in the `ALL_TABLES` + `ffi_tables` + `platform_tables` enumeration.
+#[cfg(not(target_arch = "wasm32"))]
+fn platform_tables() -> &'static [&'static [PrimitiveDef]] {
+    static TABLES: &[&[PrimitiveDef]] = &[
+        chan::PRIMITIVES,
+        concurrency::PRIMITIVES,
+        io::PRIMITIVES,
+        net::PRIMITIVES,
+        ports::PRIMITIVES,
+        posix::PRIMITIVES,
+        subprocess::PRIMITIVES,
+        unix::PRIMITIVES,
+        watch::PRIMITIVES,
+    ];
+    TABLES
+}
+
+#[cfg(target_arch = "wasm32")]
+fn platform_tables() -> &'static [&'static [PrimitiveDef]] {
+    static TABLES: &[&[PrimitiveDef]] = &[stub_wasm::PRIMITIVES];
+    TABLES
+}
 
 /// Primitive tables that require the `ffi` feature (libffi).
 #[cfg(feature = "ffi")]
@@ -94,7 +120,7 @@ pub(crate) fn def_by_name(name: &str) -> Option<&'static PrimitiveDef> {
     use std::sync::LazyLock;
     static INDEX: LazyLock<HashMap<&'static str, &'static PrimitiveDef>> = LazyLock::new(|| {
         let mut index = HashMap::new();
-        for table in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+        for table in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
             for def in *table {
                 index.insert(def.name, def);
                 for alias in def.aliases {
@@ -129,7 +155,7 @@ static PRIM_REGISTRY: std::sync::LazyLock<std::sync::Mutex<PrimRegistry>> =
             defs: Vec::new(),
             by_ptr: std::collections::HashMap::new(),
         };
-        for t in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+        for t in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
             for def in *t {
                 let key = def as *const PrimitiveDef as usize;
                 if !reg.by_ptr.contains_key(&key) {
@@ -152,7 +178,7 @@ static PRIM_REGISTRY: std::sync::LazyLock<std::sync::Mutex<PrimRegistry>> =
 /// into their key: any addition, removal, rename, or reorder of a canonical
 /// primitive changes the hash and invalidates the persisted payload.
 pub(crate) fn hash_prim_table_identity<H: std::hash::Hasher>(hasher: &mut H) {
-    for table in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+    for table in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
         for def in *table {
             hash_def_identity(def, hasher);
         }
@@ -211,7 +237,7 @@ pub fn prim_table_snapshot() -> Vec<&'static PrimitiveDef> {
 pub fn register_primitives(vm: &mut VM, symbols: &mut SymbolTable) -> PrimitiveMeta {
     let mut meta = PrimitiveMeta::new();
 
-    for table in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+    for table in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
         for def in *table {
             let sym_id = symbols.intern(def.name);
             let native_val = Value::native_fn(def);
@@ -263,7 +289,7 @@ pub fn register_primitives(vm: &mut VM, symbols: &mut SymbolTable) -> PrimitiveM
 pub fn build_primitive_meta(symbols: &mut SymbolTable) -> PrimitiveMeta {
     let mut meta = PrimitiveMeta::new();
 
-    for table in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+    for table in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
         for def in *table {
             let sym_id = symbols.intern(def.name);
             meta.signals.insert(sym_id, def.signal);
@@ -297,7 +323,7 @@ pub fn build_primitive_meta(symbols: &mut SymbolTable) -> PrimitiveMeta {
 /// with a SymbolTable that hasn't had `register_primitives` called on it.
 /// Idempotent — safe to call multiple times.
 pub fn intern_primitive_names(symbols: &mut SymbolTable) {
-    for table in ALL_TABLES.iter().chain(ffi_tables().iter()) {
+    for table in ALL_TABLES.iter().chain(ffi_tables().iter()).chain(platform_tables().iter()) {
         for def in *table {
             symbols.intern(def.name);
             for alias in def.aliases {

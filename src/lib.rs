@@ -89,6 +89,11 @@ pub mod error;
 pub mod ffi;
 pub mod formatter;
 pub mod hir;
+// wasm32 has no epoll/kqueue, no threads to pool, no signalfd and no sockets,
+// so the whole async-IO subsystem is compiled out. What Lisp code still needs
+// is the *names* — `primitives::stub_wasm` keeps them bound to a primitive
+// that reports `:unsupported`, so stdlib.lisp compiles unchanged.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod io;
 #[cfg(feature = "jit")]
 pub mod jit;
@@ -99,6 +104,7 @@ pub mod lsp;
 pub mod mlir;
 pub mod path;
 pub mod pipeline;
+#[cfg(feature = "plugin")]
 pub mod plugin;
 #[allow(improper_ctypes_definitions)]
 pub mod plugin_api;
@@ -108,6 +114,7 @@ pub mod port;
 #[macro_use]
 pub mod primitives;
 pub mod reader;
+#[cfg(feature = "repl")]
 pub mod repl;
 pub mod rewrite;
 pub mod runtime;

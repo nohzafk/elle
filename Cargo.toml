@@ -19,9 +19,9 @@ authors = ["Andy Davidoff"]
 bumpalo = "3"
 rustc-hash = "2.0"
 smallvec = "1.11"
-libloading = "0.8"
+libloading = { version = "0.8", optional = true }
 libffi = { version = "5.1", optional = true }
-rustyline = "14"
+rustyline = { version = "14", optional = true }
 libc = "0.2"
 serde_json = "1.0"
 serde = { version = "1", features = ["derive"] }
@@ -62,8 +62,13 @@ proptest = "1.4"
 stats_alloc = { version = "0.1.10", features = ["nightly"] }
 
 [features]
-default = ["jit", "ffi"]
-ffi = ["libffi"]
+## `repl` 和 `plugin` 进 default，所以原生构建的行为不变。拆出来只是为了
+## 让 wasm32 目标能关掉它们：rustyline 拖进 home/fd-lock（都不支持 wasm），
+## libloading 是 dlopen（wasm 里不存在）。
+default = ["jit", "ffi", "repl", "plugin"]
+ffi = ["libffi", "libloading"]
+plugin = ["libloading"]
+repl = ["rustyline"]
 jit = ["cranelift-codegen", "cranelift-frontend", "cranelift-module", "cranelift-jit", "cranelift-native", "target-lexicon"]
 wasm = ["wasmtime", "wasm-encoder"]
 mlir = ["melior"]

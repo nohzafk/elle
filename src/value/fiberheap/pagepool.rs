@@ -92,6 +92,7 @@ impl MmapPage {
     /// For 4K pages, `mmap` already guarantees 4K alignment. For larger
     /// pages we over-allocate 2× and trim (munmap prefix/suffix) to get
     /// a `len`-aligned sub-range.
+    #[cfg(not(target_arch = "wasm32"))]
     fn new(len: usize) -> Option<Self> {
         debug_assert!(len >= BASE_PAGE && len.is_power_of_two());
         if len == BASE_PAGE {
@@ -131,7 +132,33 @@ impl MmapPage {
         })
     }
 
+    /// wasm32 has no `mmap`. `Layout`'s alignment gives directly what the
+    /// mmap path has to over-allocate and trim for, so there is no 4K
+    /// special case here and no `new_raw`.
+    ///
+    /// What is lost against the mmap path is only the guard-page diagnostic
+    /// (`guard_and_leak` below): pages are ordinary heap allocations, so a
+    /// use-after-free cannot be made to fault at the dereference. Under wasm
+    /// that check belongs to the runtime's own bounds checking anyway.
+    #[cfg(target_arch = "wasm32")]
+    fn new(len: usize) -> Option<Self> {
+        debug_assert!(len >= BASE_PAGE && len.is_power_of_two());
+        let ptr = unsafe { std::alloc::alloc_zeroed(Self::layout(len)) };
+        if ptr.is_null() {
+            return None;
+        }
+        MAPPED_BYTES.fetch_add(len as u64, Ordering::Relaxed);
+        Some(MmapPage { ptr, len })
+    }
+
+    /// The layout `new` allocated with — `Drop` must free with the same one.
+    #[cfg(target_arch = "wasm32")]
+    fn layout(len: usize) -> std::alloc::Layout {
+        std::alloc::Layout::from_size_align(len, len).expect("page len is a power of two")
+    }
+
     /// Raw mmap without alignment trimming (used for 4K pages).
+    #[cfg(not(target_arch = "wasm32"))]
     fn new_raw(len: usize) -> Option<Self> {
         let ptr = unsafe {
             libc::mmap(
@@ -192,6 +219,10 @@ impl MmapPage {
     /// a recycled slot — pinpointing the *use* site to pair with the
     /// free-log's *free* site. Run under gdb to read the backtrace.
     fn guard_and_leak(self) {
+        // wasm32: no `mprotect`, so the page cannot be made to fault. The
+        // leak is kept — the address is still never reused, which is the
+        // half of this diagnostic that does not need the MMU.
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             libc::mprotect(self.ptr as *mut libc::c_void, self.len, libc::PROT_NONE);
         }
@@ -201,8 +232,13 @@ impl MmapPage {
 
 impl Drop for MmapPage {
     fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             libc::munmap(self.ptr as *mut libc::c_void, self.len);
+        }
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            std::alloc::dealloc(self.ptr, Self::layout(self.len));
         }
         MAPPED_BYTES.fetch_sub(self.len as u64, Ordering::Relaxed);
     }
@@ -273,13 +309,18 @@ fn record_claim(size: usize) {
     // Register the at-exit dump on first recorded claim, so it fires even when
     // the test runner ends via `os/exit` (which runs C atexit handlers but not
     // Rust destructors, so the main-thread `--stats` block is bypassed).
-    static REGISTER: std::sync::Once = std::sync::Once::new();
-    REGISTER.call_once(|| unsafe {
-        extern "C" fn at_exit() {
-            dump_page_hist();
-        }
-        libc::atexit(at_exit);
-    });
+    // wasm32: no C `atexit`, and no process exit to hook. `dump_page_hist`
+    // can still be called explicitly; only the automatic dump is lost.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static REGISTER: std::sync::Once = std::sync::Once::new();
+        REGISTER.call_once(|| unsafe {
+            extern "C" fn at_exit() {
+                dump_page_hist();
+            }
+            libc::atexit(at_exit);
+        });
+    }
     let bucket = size_class(size).min(NUM_CLASSES);
     PAGE_CLAIM_COUNT[bucket].fetch_add(1, Ordering::Relaxed);
     PAGE_CLAIM_BYTES[bucket].fetch_add(size as u64, Ordering::Relaxed);
