@@ -4,11 +4,13 @@
 作为浏览器里 cordis 插件系统 demo 的底座（demo 只演示插件系统 / policy 热加载 /
 拒绝即提问，不搬完整 agent，不接真 LLM）。
 
-**当前状态：M3 完成 —— cordis-elle 的 13 个文件在 wasm 里从内存加载成功**，
-`(import-file "src/loader.lisp")` 返回 loader 的 struct，导出的闭包可调用，
-值与原生一致。引擎跨调用常驻：每次求值 3193ms → 5ms。
-node 里 19 项断言全过；wasm32 上 0 编译错误 0 警告，原生构建未受影响
-（`cargo test --lib` 2279 passed）。
+**当前状态：M4 完成 —— `agent-harness.lisp` 在 wasm 里的输出与原生逐字节相同**
+（29 行，`cmp` 完全相同）。而且**那个脚本一个字都没改** —— 里程碑原本写的是
+"demo-harness.lisp（改自 agent-harness.lisp）"，结果不需要"改自"。
+node 里 24 项断言全过；wasm32 上 0 编译错误 0 警告，原生构建未受影响
+（`cargo test --lib` 2281 passed）。
+
+**下一步是 M5（三面板 UI），前置条件已全部解除。**
 
 ## 怎么验证
 
@@ -211,10 +213,12 @@ M1 特意让 `mod port` 在 wasm 上活着的原因；它们被 stub 纯粹是�
 详见下面 M2 一节。
 
 现在这三个是真实现（`primitives/stdio_wasm.rs`），`*stdin*`/`*stdout*`/`*stderr*`
-是真 port 值。**仍然缺的是运输**：`port/write`/`port/read` 还是 stub，所以
-`println` 依旧不出字。**这部分不是待修的 bug，是设计的一部分**：demo 的输出必须由
-embedder（`cordis-wasm` 那一层的 mock host）注册 JS console 回调来提供。
-M4 之前必须补上，否则看不到任何输出。
+是真 port 值。**写这一侧也在 M4 补齐了**：`port/write`/`port/flush` 同样搬进
+`stdio_wasm`，写进 `elle::outbuf`，宿主抽干 —— 不是当初设想的 JS console 回调，
+理由见 M4 一节。`println` / `eprintln` 现在正常出字。
+
+**读这一侧仍是 stub**：`port/read` 及同类还是 `:unsupported`。这不是待修的
+bug —— wasm 上没有能阻塞的 stdin，要输入得由 UI 送进来，不是从端口读出来。
 
 警告已清零（`339bc7bd`）。**wasm 与全部原生 feature 组合都是 0 警告 0 错误。**
 
@@ -308,6 +312,49 @@ embedder 注册 JS console 回调把 `port/write` 接通（本来就在待办里
 需要 REPL 自己的 per-form 绑定分析。M3 不需要（加载是一次求值），故未建。
 M4/M5 若要让 UI 分多次调用累积定义，这是要先补的那块。
 
+## M4 —— 输出
+
+M3 结尾指出的前置条件（`display_with` 和 `println` 渲染不一致，所以不能靠
+format 返回值）确实成立，解法是把 `println` 真正接通。
+
+### 字节去哪：缓冲，不是回调
+
+`port/write` / `port/flush` 从生成的 stub 表移进 `stdio_wasm`，写进新的
+`elle::outbuf` —— 一对 thread-local 缓冲，宿主用 `take_stdout()` /
+`take_stderr()` 抽干。
+
+**两条流而不是一条**：`PortKind` 本来就区分 `Stdout` 和 `Stderr`，合并会丢掉
+原生保留的区分，而 UI 正需要它。
+
+**缓冲而不是回调进 JS**，和时钟那次是同一个判断：回调会在模块 ABI 里留一个
+必需 import，绑住每个 embedder。求值是同步的，所以"写的时候出现"和"调用返回后
+可读"没有调用方能区分。
+
+### 被逼出来的实现方式
+
+两个 primitive 的声明与 `stream.rs` 逐字相同，但**实现是立即返回而不是 yield
+`IoRequest`**。这不是偏好：wasm32 走裸 `execute`，没有调度器，`SIG_IO`
+yield 出去没人服务。声明仍然成立 —— 原生的 `port/write` 自己就有一条立即
+返回 `SIG_OK` 的路径（空写短路）。
+
+### PROVIDED 的一个后门
+
+别名也必须列进 PROVIDED，不只是主名字。别名在抽取时被摊平成独立条目，所以
+只排除 `port/write` 会留下 `stream/write` 仍被 stub，而 `stdio_wasm` 注册那个
+别名就成了同一名字的第二个条目 —— 正是 PROVIDED 要防的重复注册，从后门进来。
+**是 grep 重新生成的表发现的，不是构建报出来的：重复注册是静默的。**
+86 → 84 个 stub。
+
+### 验收
+
+```sh
+cd ../cordis-elle && ../elle/target/debug/elle examples/agent-harness.lisp \
+  > ../cordis-wasm/expected-harness.txt      # 基准，已入库
+cd ../cordis-wasm && node test-node.cjs      # 其中一项就是逐字节比对
+```
+
+29 行，`cmp` 完全相同。**`cordis-elle` 依然零改动**，连 demo 专用变体都不需要。
+
 ## 后续里程碑
 
 M1、M2（本文档）之后：
@@ -323,9 +370,17 @@ M1、M2（本文档）之后：
   内存源只需三个触点（`resolve_import` 是解析的唯一咽喉）。
   也没有用预想的 `include_str!` 打包 —— 宿主在运行时挂载，源码不进二进制，
   demo 因此可以换 policy 文件而不重新编译 wasm。
-- **M4** — `demo-harness.lisp`（改自 `cordis-elle/examples/agent-harness.lisp`，
-  161 行）输出与原生一致。**M4 之前不写任何 UI 代码。**
-- **M5** — 三面板 UI。
+- ~~**M4** — `demo-harness.lisp`（改自 `cordis-elle/examples/agent-harness.lisp`，
+  161 行）输出与原生一致。**M4 之前不写任何 UI 代码。**~~
+  **已完成**，见上面 M4 一节。不需要 `demo-harness.lisp` —— 原脚本未经改动就
+  逐字节一致，所以那个"改自"的变体没有建。
+- **M5** — 三面板 UI。前置条件已全部解除：引擎常驻（M3）、源码从内存挂载（M3）、
+  输出可取（M4）。UI 需要的 wasm 接口已经齐了 —— `mount_file` / `eval_source` /
+  `take_stdout` / `take_stderr`。
+
+  开工前要先决定的一件事（M3 记过）：`eval_file` 顶层 `def` 不跨调用。UI 若要
+  分多次调用累积定义（比如面板里逐条输入），得先补 REPL 那套绑定登记；若每次
+  都整段重跑，则不需要。
 
 `cordis-elle` 是 1670 行纯 Elle Lisp、0 个 `.rs`，只用了一个 io primitive
 （`file/write`），coeffect / 生命周期 / SUSPENDED 机制全在里面。它**预期零改动**。
