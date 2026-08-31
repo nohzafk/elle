@@ -1,19 +1,48 @@
 use crate::primitives::def::RegionEffect;
 use crate::signals::Signal;
-use crate::value::fiber::{SignalBits, SIG_ERROR, SIG_OK};
+use crate::value::fiber::{SignalBits, SIG_ERROR};
+// On wasm32 every primitive in this file refuses, so nothing here ever succeeds
+// and `SIG_OK` genuinely has no use — cfg'd out rather than allow'd, so that a
+// future primitive that *can* answer on that target fails to compile until it
+// brings the import back.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::value::fiber::SIG_OK;
 use crate::value::types::Arity;
 use crate::value::Value;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+// wasm32-unknown-unknown has no clock and no threads at all: `Instant::now`,
+// `SystemTime::now` and `thread::sleep` are all present as *compiling* stubs
+// that panic when called (std's `sys/time/unsupported.rs` and
+// `sys/thread/unsupported.rs`). So three of the four primitives in this file
+// have to be answered per target, the same way `clock/cpu` already is.
+//
+// All four refuse rather than approximate. A wall clock passed off as a
+// monotonic one makes every duration computed from it quietly wrong, which is
+// worse than an error a program can catch — and `time/sleep` cannot be
+// approximated at all, since a browser cannot block.
+//
+// An embedder *could* supply real time here (`performance.now()` and
+// `Date.now()` both exist in the host), but only by having elle import a
+// function from JS. That would put a required import in elle's wasm ABI and
+// oblige every embedder to provide it, so it is deliberately not done: the
+// demo does not need timing, and a later embedder-registered primitive can
+// add it without changing this file.
+
+#[cfg(not(target_arch = "wasm32"))]
 static PROCESS_EPOCH: OnceLock<Instant> = OnceLock::new();
 
+#[cfg(not(target_arch = "wasm32"))]
 fn process_epoch() -> &'static Instant {
     PROCESS_EPOCH.get_or_init(Instant::now)
 }
 
 /// Returns seconds elapsed since process start (monotonic clock)
 /// (clock/monotonic)
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prim_clock_monotonic(
     _ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     _args: &[Value],
@@ -21,6 +50,20 @@ pub(crate) fn prim_clock_monotonic(
     (
         SIG_OK,
         Value::float(process_epoch().elapsed().as_secs_f64()),
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn prim_clock_monotonic(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    (
+        SIG_ERROR,
+        ctx.error(
+            "unsupported",
+            "clock/monotonic: no clock on wasm32".to_string(),
+        ),
     )
 }
 
@@ -66,6 +109,21 @@ pub(crate) fn prim_clock_cpu(
 
 /// Returns seconds since Unix epoch (wall clock)
 /// (clock/realtime)
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn prim_clock_realtime(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    (
+        SIG_ERROR,
+        ctx.error(
+            "unsupported",
+            "clock/realtime: no system clock on wasm32".to_string(),
+        ),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prim_clock_realtime(
     ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     _args: &[Value],
@@ -84,6 +142,25 @@ pub(crate) fn prim_clock_realtime(
 
 /// Sleeps for the specified number of seconds
 /// (time/sleep seconds)
+///
+/// Refuses on wasm32 without inspecting the argument: a blocking sleep is not
+/// something this target can do for any duration, so validating first would only
+/// change which error a caller gets for a call that cannot succeed either way.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn prim_sleep(
+    ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
+    _args: &[Value],
+) -> (SignalBits, Value) {
+    (
+        SIG_ERROR,
+        ctx.error(
+            "unsupported",
+            "time/sleep: cannot block on wasm32".to_string(),
+        ),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prim_sleep(
     ctx: &mut crate::primitives::ctx::NativeCtx<'_>,
     args: &[Value],
