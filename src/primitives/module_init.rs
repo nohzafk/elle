@@ -24,7 +24,7 @@ pub fn init_stdlib(
     cache: &crate::compiler::stdlib_cache::StdlibCache,
 ) -> StdlibSource {
     let tracing = crate::trace::compile();
-    let t0 = std::time::Instant::now();
+    let t0 = crate::trace::stamp();
     let mark = |label: &str| {
         crate::trace::phase(tracing, "compile", &format!("stdlib {label}"), t0);
     };

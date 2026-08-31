@@ -87,7 +87,7 @@ fn compile_syntaxes_frontend_xform_inner(
 ) -> FrontendResult {
     intern_primitive_names(symbols);
     let tracing = crate::trace::compile();
-    let ft0 = std::time::Instant::now();
+    let ft0 = crate::trace::stamp();
     let fmark = |label: &str| {
         crate::trace::phase(
             tracing,

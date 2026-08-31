@@ -301,7 +301,7 @@ fn compile_file_inner(
     source_name: &str,
 ) -> Result<(CompileResult, crate::syntax::Expander), String> {
     let tracing = crate::trace::compile();
-    let t0 = std::time::Instant::now();
+    let t0 = crate::trace::stamp();
     let mark = |label: &str| {
         crate::trace::phase(tracing, "compile", &format!("{source_name} {label}"), t0);
     };

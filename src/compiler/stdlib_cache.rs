@@ -384,7 +384,7 @@ pub fn load_bytecode(
             stored.format_version, FORMAT_VERSION
         ));
     }
-    let t0 = std::time::Instant::now();
+    let t0 = crate::trace::stamp();
     let mut alloc = crate::primitives::ctx::Alloc::new(vm.heap());
     let mut templates = crate::value::send::deserialize_templates(
         vec![stored.entry],
@@ -394,7 +394,7 @@ pub fn load_bytecode(
     )?;
     let tracing = crate::trace::compile();
     crate::trace::phase(tracing, "compile", "stdlib deserialize_templates", t0);
-    let t1 = std::time::Instant::now();
+    let t1 = crate::trace::stamp();
     let entry = templates
         .pop()
         .expect("deserialize_templates returns one per input");
