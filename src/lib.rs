@@ -107,7 +107,22 @@ pub mod pipeline;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 #[allow(improper_ctypes_definitions)]
+// The C ABI table and its accessors are the *plugin-side* half of the boundary:
+// with the `plugin` feature off nothing in this process calls them, so the whole
+// subtree reads as dead. Keeping it compiled anyway is deliberate — the table's
+// shape must not vary with the feature set or the target, or the ABI would not be
+// stable — so silence the lint on exactly the configurations where the callers
+// are absent, rather than deleting the callees. Lint levels propagate down the
+// module tree, so this one attribute covers `capi` and all of its submodules.
+#[cfg_attr(not(feature = "plugin"), allow(dead_code))]
 pub mod plugin_api;
+// On wasm32 only the *data* half of `Port` survives: `value::display` renders a
+// port and `value::send` rebuilds the three stdio kinds, while every constructor
+// and accessor that touches a descriptor is reached only from `io`/`net`/`unix`/
+// `ports`, all compiled out. So the fd-bearing variants, fields and methods are
+// unreachable there by construction — which is exactly what `OwnedFd` being an
+// uninhabited stand-in already asserts in the type system.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod port;
 // `#[macro_use]`: the `type-error` macros of `primitives::arg` also serve the
 // VM opcode handlers, and `vm` is declared after this.

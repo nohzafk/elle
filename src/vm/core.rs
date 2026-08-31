@@ -243,6 +243,10 @@ pub struct VM {
     /// continues. A `VM` field: one VM per worker thread, so per-VM equals
     /// per-thread, keeping the trap scoped to the calling OS thread (the runner's
     /// own `exit`, on a VM with the trap unset, still terminates the process).
+    /// wasm32: written at construction but never read, because both the reader
+    /// (`exit`) and the writer (`sys/trap-exit!`) live in `primitives::subprocess`,
+    /// which that target compiles out.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) exit_trapped: bool,
     /// JIT code cache: bytecode pointer → pinned entry (see `JitCacheEntry`
     /// and docs/impl/jit.md § "Cache identity"). Write through

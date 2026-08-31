@@ -18,6 +18,10 @@ pub mod callback;
 pub(crate) mod from_c;
 #[cfg(feature = "ffi")]
 pub mod marshal;
+// Without `libloading` the registry keeps its bookkeeping types but can never put
+// anything in them (see the module's own docs), so every one of them reads as
+// dead. That emptiness is the point, not an oversight.
+#[cfg_attr(not(feature = "libloading"), allow(dead_code))]
 pub mod registry;
 #[cfg(feature = "ffi")]
 pub(crate) mod to_c;

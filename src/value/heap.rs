@@ -315,6 +315,10 @@ pub enum HeapObject {
 /// plain `Send` fields (like `result`) — not heap `Value`s — so they need
 /// no GC tracing.
 #[derive(Clone)]
+// wasm32 has no threads, so `sys/spawn` and the rest of `primitives::concurrency`
+// are compiled out and nothing ever reads a handle's channel halves. The type stays
+// because `ThreadState` is part of the value model either way.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct ThreadHandle {
     /// The result of the spawned thread execution, wrapped in `SendBundle` for Send.
     pub result: Arc<Mutex<Option<Result<crate::value::send::SendBundle, String>>>>,
@@ -331,6 +335,7 @@ impl ThreadHandle {
     /// Create a new thread handle with a shared result slot and the
     /// receiver/wake-list halves of its completion channel.
     /// `pub(crate)`: takes the crate-private `SendableValue` channel type.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn new(
         result: Arc<Mutex<Option<Result<crate::value::send::SendBundle, String>>>>,
         done_rx: crossbeam_channel::Receiver<crate::primitives::chan::SendableValue>,

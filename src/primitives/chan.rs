@@ -16,6 +16,10 @@
 //! the same way — `write(eventfd, 1)` is thread-safe and the kernel poll
 //! notices it.
 
+// Everything below that is cfg'd out on wasm32 is a *primitive* — the module keeps
+// only its data types there (see `RawFd` and `WakeList` below), and these imports
+// serve the primitive bodies alone.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::primitives::def::RegionEffect;
 use std::cell::RefCell;
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,14 +33,22 @@ use std::os::unix::io::RawFd;
 type RawFd = i32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use crossbeam_channel::{self, TryRecvError, TrySendError};
+// Only the error types were primitive-only. The `Sender`/`Receiver` field types
+// below are spelled through the crate path, which edition 2021 has in scope
+// already, so nothing unconditional needs importing here.
+#[cfg(not(target_arch = "wasm32"))]
+use crossbeam_channel::{TryRecvError, TrySendError};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::request::{IoOp, IoRequest};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::signals::Signal;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::value::fiber::{SignalBits, SIG_ERROR, SIG_IO, SIG_OK};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::value::types::Arity;
 use crate::value::Value;
 

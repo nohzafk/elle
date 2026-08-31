@@ -16,6 +16,10 @@ pub mod bytes;
 /// move channel endpoints between fibers. Inside it, the fd machinery and
 /// the primitive table are cfg'd out, so `chan::PRIMITIVES` does not exist
 /// there and `stub_wasm` supplies the names instead.
+///
+/// The `WakeList` that survives is therefore a shape nothing fills in: its fds are
+/// registered only by `chan/select`, which is one of the cfg'd-out primitives.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub mod chan;
 pub mod collection;
 

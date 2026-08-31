@@ -201,6 +201,9 @@ pub(crate) fn record_free(region: u32, kind: String, ranges: Vec<(usize, usize)>
 /// "was this address freed?" purely from the log. Used by use-site checks (e.g.
 /// `UpdateCapture`) to turn a latent UAF into an immediate, attributed panic at
 /// the consuming instruction.
+// wasm32: the sole caller is `segv_handler`, which needs an MMU and a signal to
+// exist at all (see `arm_guard`), so it is compiled out there along with this.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn freed_site(addr: usize) -> Option<String> {
     FREE_LOG.with(|log| {
         let log = log.borrow();
