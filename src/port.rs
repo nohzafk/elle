@@ -6,8 +6,25 @@
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
+#[cfg(not(target_arch = "wasm32"))]
 use std::os::unix::io::OwnedFd;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// wasm32 stand-in for `std::os::unix::io::OwnedFd`.
+///
+/// wasm32-unknown-unknown has no file descriptors, and on that target there is
+/// no way to come by one: every constructor that takes an fd (`new_file`,
+/// `new_tcp_listener`, `set_fd`, …) is reached only from `io`, `net`, `unix` and
+/// `ports`, all of which are compiled out there. What survives is the *data*
+/// half of `Port` — `value/display` renders one and `value/send` reconstructs
+/// the three stdio kinds, which carry `fd: None` by construction.
+///
+/// So the type is deliberately uninhabited. It lets `Port`'s field and the
+/// fd-taking signatures typecheck unchanged, while making every path that would
+/// need a real descriptor statically unreachable — rather than inventing a
+/// descriptor number that nothing on this target could honour.
+#[cfg(target_arch = "wasm32")]
+pub(crate) enum OwnedFd {}
 
 /// The kind of underlying OS resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
