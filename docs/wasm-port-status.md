@@ -4,9 +4,11 @@
 作为浏览器里 cordis 插件系统 demo 的底座（demo 只演示插件系统 / policy 热加载 /
 拒绝即提问，不搬完整 agent，不接真 LLM）。
 
-**当前状态：M2 完成 —— Elle 代码真的在 wasm 里跑出正确答案了**
-（node 里 8 个表达式全过：算术、闭包、`let`、字符串、列表）。
-wasm32 上 0 编译错误 0 警告，原生构建全程未受影响（`cargo test --lib` 2275 passed）。
+**当前状态：M3 完成 —— cordis-elle 的 13 个文件在 wasm 里从内存加载成功**，
+`(import-file "src/loader.lisp")` 返回 loader 的 struct，导出的闭包可调用，
+值与原生一致。引擎跨调用常驻：每次求值 3193ms → 5ms。
+node 里 19 项断言全过；wasm32 上 0 编译错误 0 警告，原生构建未受影响
+（`cargo test --lib` 2279 passed）。
 
 ## 怎么验证
 
@@ -23,6 +25,14 @@ cd ../cordis-wasm && wasm-pack build --target nodejs --dev && node test-node.cjs
 ```
 
 改了 elle 里任何 wasm 相关的东西，都要跑这一条，`cargo check` 说不了话。
+
+M3 起，内存源那部分**在原生就能测**（`elle::vfs` 不按 target gate，正是为了这个）：
+
+```sh
+cargo test --lib vfs        # 2.5 秒，不用 wasm 工具链
+```
+
+只需要 wasm 才能测的东西越少越好 —— 要开浏览器才能说话的测试，最后就不跑了。
 
 第二条是红线：这个移植的全部价值在于不给原生路径添乱。每次改完两条都要跑。
 
@@ -233,6 +243,71 @@ M4 之前必须补上，否则看不到任何输出。
 唯一剩下的警告：`cargo check --tests --examples` 报 `io::pending::get` never
 used。**预存且与本移植无关**（`io/` 全程没碰，且只在 test build 里出现）。
 
+## M3 —— 内存源 + 常驻引擎
+
+两件事，都比预估小，而且**预估的难点都不是真难点**。
+
+### 常驻引擎：难点是自己造的
+
+预估说"三件套自引用，不能塞进 `thread_local`"。实际 elle 早就解决了：
+`elle::runtime::Runtime`（lib.rs 开头就写着"推荐的嵌入入口"）内部把
+`SymbolTable`/`CompileCtx`/`FiberHeap` 全 `Box` 起来，**就是为了地址能扛过从
+构造函数移出**，所以它可以整体放进 `thread_local`。M2 手搓那套是从
+`tests/region_scrub.rs` 抄的内部写法 —— 抄了测试，没读文档给的入口。
+
+改用 `Runtime` 顺手修掉一个潜在缺陷：`VM::new()` + `CompileCtx::new()` 让
+程序 VM 和宏展开 VM **各有一个 heap**，而 `RuntimeCore` 特意让两者共享。
+
+代价对比：per-call 重建 3193ms，常驻后 5ms（首次仍付 ~3s 编译 stdlib）。
+成本从来不在求值，在每次重编一遍 stdlib。
+
+（另注：lib.rs 那段文档里第二个例子已经过时 —— `init_stdlib` 写了 3 个参数，
+实际要 4 个。用第一个例子。）
+
+### 内存源：`resolve_import` 是唯一咽喉，但"读"分散在两处
+
+`elle::vfs`：thread-local 的 `path → 源码` 表，三个触点接入 ——
+`resolve_import` 开头先查表（命中就把 spec 本身当路径返回，所以挂载会**遮蔽**
+同名真实文件），编译期 `include`（`transforms.rs`）和运行期 `import-file`
+（`modules.rs`）各自读之前先查表。`include-file` 走另一个解析器
+（`resolve_include_file`，相对源文件而非 cwd），不在这条路上，未动。
+
+**刻意不按 target gate。** 这样同一套机制在原生就能对着真实解析器做进程内测试，
+4 个单元测试 2.5 秒（其中一个是"挂载的文件再 include 挂载的文件"—— 真实代码
+就是这个形状，只做平铺的实现会通过前一个而在这个上失败）。
+
+也刻意不做 per-`Runtime`：两个读点都是从编译器深处进来的自由函数，手上没有
+实例，为这点隔离度把 resolver 穿过所有调用方不值得。
+
+### 验收
+
+挂载 cordis-elle 全部 13 个 `.lisp`（键为相对其根的路径 —— 没有 cwd 之后
+"相对 cwd 解析"就是这个意思），然后：
+
+```
+(def L (import-file "src/loader.lisp"))
+[(type-of L) (type-of (get L :apply)) ((get L :history-depth))]
+→ [:struct :closure 0]        # 原生 println 打印 [struct closure 0]
+```
+
+整个 include/import 图都通了：`cordis.lisp` include 6 个 core 文件，
+`src/loader.lisp` include 3 个 loader 文件并 import `cordis.lisp`。
+**cordis-elle 零改动**，如预期。
+
+### M3 暴露的、M4 必须先解决的一件事
+
+`Value::display_with` 和 `println` 的渲染**不一致**：keyword 上分叉
+（`:kw` vs `kw`，嵌套在数组里也一样）。所以 M4 要求"输出与原生一致"时，
+不能靠把返回值 format 出来 —— 必须让程序自己 `println`，也就是必须先由
+embedder 注册 JS console 回调把 `port/write` 接通（本来就在待办里，
+现在多了一条硬理由）。
+
+另一件已知限制，已固化成测试：`eval_file` 顶层的 `def` 不跨调用（它把输入编译成
+一个合成 letrec，顶层 `def` 是编译单元的局部绑定）。REPL 能跨行是靠
+`compile_file_repl` + `register_repl_macros` + 逐名字 `register_repl_binding`，
+需要 REPL 自己的 per-form 绑定分析。M3 不需要（加载是一次求值），故未建。
+M4/M5 若要让 UI 分多次调用累积定义，这是要先补的那块。
+
 ## 后续里程碑
 
 M1、M2（本文档）之后：
@@ -242,22 +317,12 @@ M1、M2（本文档）之后：
   `store()` 都属于"跨调用持久状态"，而那是 M3 的事 —— 见下。
   规模也比预估小得多（`src/lib.rs` 69 行），因为难点全在 elle 侧的四个运行时
   缺陷上，不在 binding 上。
-- **M3** — 内存 import resolver 加载 `loader.lisp`，外加**跨调用持久 VM**。
-  **这是剩下最大的风险**：浏览器没有文件系统，而 `cordis-elle` 用
-  `import-file`/`include` 组织 13 个文件。方案是 `include_str!` 打包 + 给 elle 的
-  路径解析注入内存 resolver。
-
-  M2 查实的两件事改变了这一步的形状：
-
-  1. **好消息** —— elle 自己的 stdlib 是 `include_str!("../stdlib.lisp")`
-     （`primitives/module_init.rs`），本来就不碰文件系统。所以需要内存 resolver
-     的只有 cordis-elle 那 13 个文件，不含 elle 自身。
-  2. **新的必做项** —— 持久 VM 不只是优化。M2 每次调用都重建引擎，因此每次都要
-     重新编译一遍整个 stdlib：node 里 8 个表达式 24 秒（dev 构建，未优化）。
-     加载 cordis-elle 之后按 per-call 重建根本不可行。
-     难点是 `VM` 持有指向它自己的 `SymbolTable` 和 `CompileCtx` 的裸指针
-     （`vm.set_compile_ctx(&mut cctx as *mut _)`），所以这三件套是自引用的，
-     不能直接塞进 `thread_local`。
+- ~~**M3** — 内存 import resolver 加载 `loader.lisp`，外加跨调用持久 VM。~~
+  **已完成**，见上面 M3 一节。曾被判为"剩下最大的风险"，实际两个预估的难点
+  都不存在：持久 VM 有 `elle::runtime::Runtime` 现成可用（自引用问题它已解决），
+  内存源只需三个触点（`resolve_import` 是解析的唯一咽喉）。
+  也没有用预想的 `include_str!` 打包 —— 宿主在运行时挂载，源码不进二进制，
+  demo 因此可以换 policy 文件而不重新编译 wasm。
 - **M4** — `demo-harness.lisp`（改自 `cordis-elle/examples/agent-harness.lisp`，
   161 行）输出与原生一致。**M4 之前不写任何 UI 代码。**
 - **M5** — 三面板 UI。
