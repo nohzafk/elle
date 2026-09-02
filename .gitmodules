@@ -1,6 +1,6 @@
 [submodule "plugins"]
 	path = plugins
-	url = https://github.com/elle-lisp/plugins.git
+	url = https://github.com/nohzafk/plugins.git
 	branch = main
 [submodule "mcp"]
 	path = mcp
