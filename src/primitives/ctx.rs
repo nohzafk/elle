@@ -229,6 +229,43 @@ impl<'h> NativeCtx<'h> {
         crate::value::Value::keyword(name)
     }
 
+    /// Construct an error value, learning the kind's spelling first.
+    ///
+    /// Shadows [`Alloc::error`] (reachable through `Deref`) for the one reason
+    /// that `Alloc` cannot: this ctx has the instance's memo, so the kind
+    /// keyword can be printed by name instead of as `#<keyword:hash>`.
+    ///
+    /// Every error kind a native mints is a spelling that exists only at run
+    /// time — the host names it in Rust, and the reader never sees it. Without
+    /// this, an error kind is only printable if it happens to be in the static
+    /// vocabulary, which is the runtime's own word list, not the host's.
+    pub fn error(&self, kind: &str, msg: impl Into<String>) -> crate::value::Value {
+        self.learn_keyword(kind);
+        self.alloc.error(kind, msg)
+    }
+
+    /// [`Alloc::error_extra`] with the kind's spelling learned first — same
+    /// reason as [`NativeCtx::error`].
+    pub fn error_extra(
+        &self,
+        kind: &str,
+        msg: impl Into<String>,
+        extra: &[(&str, crate::value::Value)],
+    ) -> crate::value::Value {
+        self.learn_keyword(kind);
+        self.alloc.error_extra(kind, msg, extra)
+    }
+
+    /// Record `name`'s spelling in this instance's memo without building a
+    /// value. The half of [`NativeCtx::keyword`] the error constructors need:
+    /// they build their own keyword through the struct field, so they want the
+    /// learning and not the value.
+    fn learn_keyword(&self, name: &str) {
+        if let Some(symbols) = unsafe { self.vm().symbols_ptr.as_mut() } {
+            symbols.keyword(name);
+        }
+    }
+
     /// The VM's Unicode segmentation generation, for grapheme operations.
     #[inline]
     pub fn unicode_generation(&self) -> crate::segment::Generation {
@@ -316,8 +353,15 @@ ctx_ctors! {
 impl<'h> Alloc<'h> {
     /// Construct an error value `{:error :kind :message msg}` born on the ctx's
     /// heap in the call's region (the ergonomic forwarder a native body uses
-    /// instead of the bare `error_val`). The kind keyword is interned
-    /// (immediate).
+    /// instead of the bare `error_val`).
+    ///
+    /// The kind keyword is an immediate: identity only, **spelling not
+    /// recorded**. `Alloc` holds no symbol table, so an error built here
+    /// prints its kind as `#<keyword:hash>` unless the spelling reaches a
+    /// memo some other way (the static vocabulary, or a reader token).
+    /// `NativeCtx::error` overrides this to learn the spelling first — a
+    /// native that wants its error kind printable should hold a `NativeCtx`,
+    /// which it does everywhere except the bare-boundary constructors.
     #[inline]
     pub fn error(&self, kind: &str, msg: impl Into<String>) -> Value {
         crate::value::build::error(self.heap(), kind, msg, self.region)

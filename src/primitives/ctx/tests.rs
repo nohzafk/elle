@@ -213,3 +213,71 @@ fn ctx_allocates_on_its_own_heap_not_the_tls_heap() {
     );
     heap_b.decref_region_if_present(region_b);
 }
+
+/// An error kind minted by a native prints by name, not as `#<keyword:hash>`.
+///
+/// The kind is an immediate whose payload is the spelling's hash; the spelling
+/// itself lives only in the instance memo or the static vocabulary. A host's
+/// own error kinds are in neither by construction — the host names them in
+/// Rust and the reader never sees the token — so `ctx.error` has to record the
+/// spelling as it builds the value. Before this, every host-minted kind came
+/// back out as `#<keyword:0x…>`, which is the value printing correctly and
+/// telling the reader nothing.
+///
+/// The test installs its own `SymbolTable` because `with_test_ctx` drives a
+/// bare `VM` (no `RuntimeCore`), whose `symbols_ptr` is null — and a ctx with
+/// no memo has nowhere to record a spelling. That is the documented contract
+/// of a bare VM, not a gap this fix closes.
+#[test]
+fn error_kind_keyword_keeps_its_spelling() {
+    let mut symbols = crate::symbol::SymbolTable::new();
+    let symbols_ptr: *mut crate::symbol::SymbolTable = &mut symbols;
+
+    crate::primitives::ctx::with_test_ctx_keep_region(|ctx| {
+        ctx.vm().set_symbols(symbols_ptr);
+
+        let err = ctx.error("host-minted-kind", "the message");
+
+        let fields = err.as_struct().expect("error value is a struct");
+        let kind = crate::value::types::sorted_struct_get(
+            fields,
+            &crate::value::heap::TableKey::keyword("error"),
+        )
+        .expect("error struct carries :error");
+
+        assert_eq!(
+            ctx.keyword_spelling(*kind).as_deref(),
+            Some("host-minted-kind"),
+            "the kind's spelling must be in the memo after ctx.error built it",
+        );
+    });
+}
+
+/// The same guarantee for the extra-fields constructor: both entry points
+/// learn the spelling, so an error is not printable-or-not depending on
+/// which one the native happened to call.
+#[test]
+fn error_extra_kind_keyword_keeps_its_spelling() {
+    let mut symbols = crate::symbol::SymbolTable::new();
+    let symbols_ptr: *mut crate::symbol::SymbolTable = &mut symbols;
+
+    crate::primitives::ctx::with_test_ctx_keep_region(|ctx| {
+        ctx.vm().set_symbols(symbols_ptr);
+
+        let detail = ctx.string("detail");
+        let err = ctx.error_extra("kind-with-extras", "the message", &[("where", detail)]);
+
+        let fields = err.as_struct().expect("error value is a struct");
+        let kind = crate::value::types::sorted_struct_get(
+            fields,
+            &crate::value::heap::TableKey::keyword("error"),
+        )
+        .expect("error struct carries :error");
+
+        assert_eq!(
+            ctx.keyword_spelling(*kind).as_deref(),
+            Some("kind-with-extras"),
+            "error_extra must learn the kind's spelling too",
+        );
+    });
+}
