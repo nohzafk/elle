@@ -217,7 +217,7 @@ templates at compile time and never enter the pool.
 
 ## Measured effect
 
-Release build, cordis-pi startup (`[timing] boot`):
+Release build, cordis-agent startup (`[timing] boot`):
 
 | Scenario | boot time |
 |---|---|
