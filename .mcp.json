@@ -1,8 +1,35 @@
 {
   "mcpServers": {
-    "elle-mcp": {
-      "command": "elle",
-      "args": ["mcp/mcp-server.lisp"]
+    "elle": {
+      "type": "unix",
+      "command": "./target/release/elle",
+      "args": ["mcp/mcp-server.lisp"],
+      "cwd": "elle",
+      "path": "/tmp/elle-shared.sock",
+      "cordis": {
+        "prefix": "elle_",
+        "expose": [
+          "portrait",
+          "signal_query",
+          "trace",
+          "impact",
+          "analyze_file",
+          "eval",
+          "sparql_query"
+        ],
+        "class": {
+          "portrait": "read",
+          "signal_query": "read",
+          "trace": "read",
+          "impact": "read",
+          "analyze_file": "read",
+          "sparql_query": "read"
+        },
+        "defaultClass": "write",
+        "timeoutMs": 120000,
+        "callTimeoutMs": 120000,
+        "spawnDaemon": true
+      }
     }
   }
 }
