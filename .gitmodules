@@ -4,5 +4,5 @@
 	branch = main
 [submodule "mcp"]
 	path = mcp
-	url = https://github.com/elle-lisp/mcp.git
+	url = https://github.com/nohzafk/elle-mcp.git
 	branch = main
